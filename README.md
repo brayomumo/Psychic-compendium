@@ -1,2 +1,5 @@
 # Psychic-compendium
-Collection of PoC to feed my minds
+Collection of PoC to feed my demons
+
+## Applications made
+1. Go based TODO cli application
