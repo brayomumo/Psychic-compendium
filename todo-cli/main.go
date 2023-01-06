@@ -6,17 +6,26 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"time"
 )
 
 type Task struct {
-	name        string
-	description string
-	done        bool
+	name         string
+	description  string
+	done         bool
+	dateCreated  time.Time
+	dateFinished time.Time
 }
 
 func newTask(name string, description string) *Task {
 
-	task := Task{name: name, description: description, done: false}
+	task := Task{
+		name:         name,
+		description:  description,
+		done:         false,
+		dateCreated:  time.Now(),
+		dateFinished: time.Time{},
+	}
 	return &task
 }
 
@@ -52,13 +61,28 @@ func addTask(scanner bufio.Scanner) int {
 
 func (t *Task) markAsDone() {
 	t.done = true
+	t.dateFinished = time.Now()
 	tasks = append(tasks, *t)
 
 }
 
 func printTasks() {
+	dateFormat := "2006-02-01 12:59pm"
+
 	for index, task := range tasks {
-		fmt.Printf("%d: name: %s  -> Description: %s --> Done: %t\n", index+1, task.name, task.description, task.done)
+		if task.done {
+			fmt.Printf("%d: name: %s  -> Description: %s --> Done: %t  --> Date Finished: %s\n", index+1, task.name, task.description, task.done, task.dateFinished.Format(dateFormat))
+		} else {
+			fmt.Printf("%d: name: %s  -> Description: %s --> Done: %t\n", index+1, task.name, task.description, task.done)
+
+		}
+	}
+}
+func printPendingTasks() {
+	for index, task := range tasks {
+		if !task.done {
+			fmt.Printf("%d: name: %s  -> Description: %s --> Done: %t\n", index+1, task.name, task.description, task.done)
+		}
 	}
 }
 func printPendingTasks() {
@@ -77,7 +101,13 @@ func main() {
 	// label for the loop
 context:
 	for {
-		fmt.Println("To add new task enter E, to finish a task enter F, to list unfinished tasks enter L, To list All tasks enter A, to quit enter Q")
+		fmt.Println(`
+		To add new task enter E, 
+		To finish a task enter F,
+		To list unfinished tasks enter L, 
+		To list All tasks enter A,
+		To Delete tasks Enter D,
+		To quit enter Q`)
 		scanner.Scan()
 		reply := scanner.Text()
 		switch reply {
@@ -88,6 +118,8 @@ context:
 			fmt.Println("Enter task number to mark as complete:")
 			scanner.Scan()
 			num := scanner.Text()
+
+			// convert index to int
 			n, err := strconv.Atoi(num)
 			if err != nil {
 				log.Fatal(err)
@@ -101,6 +133,17 @@ context:
 			printPendingTasks()
 		case "A":
 			printTasks()
+		case "D":
+			fmt.Println("Enter task number to mark as complete:")
+			scanner.Scan()
+			num := scanner.Text()
+			n, err := strconv.Atoi(num)
+			if err != nil {
+				log.Fatal(err)
+			}
+			task := tasks[n-1]
+			tasks = append(tasks[:n-1], tasks[n:]...)
+			fmt.Printf("Task %s deleted successfully", task.name)
 
 		case "Q":
 			// break from the for loop using the label
