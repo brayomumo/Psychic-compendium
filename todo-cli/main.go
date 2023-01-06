@@ -50,15 +50,22 @@ func addTask(scanner bufio.Scanner) int {
 	return len(tasks)
 }
 
-func markAsDone(index int) {
-	task := tasks[index-1]
-	task.done = true
-	_ = append(tasks, task)
+func (t *Task) markAsDone() {
+	t.done = true
+	tasks = append(tasks, *t)
+
 }
 
 func printTasks() {
 	for index, task := range tasks {
 		fmt.Printf("%d: name: %s  -> Description: %s --> Done: %t\n", index+1, task.name, task.description, task.done)
+	}
+}
+func printPendingTasks() {
+	for index, task := range tasks {
+		if !task.done {
+			fmt.Printf("%d: name: %s  -> Description: %s --> Done: %t\n", index+1, task.name, task.description, task.done)
+		}
 	}
 }
 
@@ -70,11 +77,11 @@ func main() {
 	// label for the loop
 context:
 	for {
-		fmt.Println("To add new task enter A, to finish a task enter F, to list tasks enter L, to quit enter Q")
+		fmt.Println("To add new task enter E, to finish a task enter F, to list unfinished tasks enter L, To list All tasks enter A, to quit enter Q")
 		scanner.Scan()
 		reply := scanner.Text()
 		switch reply {
-		case "A":
+		case "E":
 			l := addTask(*scanner)
 			fmt.Printf("\nTasks added in array: %d\n ", l)
 		case "F":
@@ -85,9 +92,14 @@ context:
 			if err != nil {
 				log.Fatal(err)
 			}
-			markAsDone(n)
+			task := tasks[n-1]
+			tasks = append(tasks[:n-1], tasks[n:]...)
+			task.markAsDone()
+			// tasks  = append(tasks, task)
 
 		case "L":
+			printPendingTasks()
+		case "A":
 			printTasks()
 
 		case "Q":
