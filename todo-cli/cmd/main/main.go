@@ -37,7 +37,22 @@ context:
 		reply := scanner.Text()
 		switch reply {
 		case "E":
-			tasks = controller.AddTask(*scanner, tasks)
+			fmt.Println("Task Name: ")
+			scanner.Scan()
+			// Scan for multiple lines, Scanln for single line
+			err := scanner.Err()
+			task := scanner.Text()
+
+			utils.HandleError(err)
+
+			fmt.Println("Task Description: ")
+			scanner.Scan()
+
+			err = scanner.Err()
+			utils.HandleError(err)
+			desc := scanner.Text()
+
+			tasks = controller.AddTask(task, desc, tasks)
 
 		case "F":
 			fmt.Println("Enter task number to mark as complete:")
