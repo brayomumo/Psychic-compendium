@@ -1,41 +1,23 @@
 package controller
 
 import (
-	"bufio"
 	"fmt"
 	"log"
 	"time"
 
 	model "todo/pkg/models"
-	"todo/pkg/utils"
 )
 
-func AddTask(scanner bufio.Scanner, tasks []model.Task) []model.Task {
-	fmt.Println("Add a new task below: ")
-	fmt.Println("Task Name: ")
-
-	scanner.Scan()
-	// Scan for multiple lines, Scanln for single line
-	err := scanner.Err()
-
-	utils.HandleError(err)
-	task := scanner.Text()
-
-	fmt.Println("Task Description: ")
-	scanner.Scan()
-
-	err = scanner.Err()
-	utils.HandleError(err)
-	desc := scanner.Text()
+func AddTask(name string, description string, tasks []model.Task) []model.Task {
 
 	// save to database
-	tasks = append(tasks, *NewTask(task, desc))
+	tasks = append(tasks, *newTask(name, description))
 	log.Println("Task added successfully")
 
 	return tasks
 }
 
-func NewTask(name string, description string) *model.Task {
+func newTask(name string, description string) *model.Task {
 
 	task := model.Task{
 		Name:         name,
