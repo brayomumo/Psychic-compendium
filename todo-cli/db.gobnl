@@ -1,0 +1,56 @@
+package main
+
+import (
+	"database/sql"
+	"fmt"
+	"time"
+
+	_ "github.com/lib/pq"
+)
+
+type Task struct {
+	name         string
+	description  string
+	done         bool
+	dateCreated  time.Time
+	dateFinished time.Time
+}
+
+const (
+	host     = "localhost"
+	port     = 5432
+	user     = "todo"
+	password = "todo_cli"
+	dbname   = "todo"
+)
+
+func initDatabase() *sql.DB {
+	// Connection string
+	psqlconn := fmt.Sprintf(
+		"host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
+		host, port, user, password, dbname)
+
+	// Open Database
+	db, err := sql.Open("postgres", psqlconn)
+
+	handleError(err)
+	// Close database
+	defer db.Close()
+
+	// Check Database
+	err = db.Ping()
+
+	handleError(err)
+
+	return db
+}
+
+
+func GetAllTasks(db sql.DB){
+	sqlStatement := `SELECT * FROM "Tasks`
+
+	data, err := db.Query(sqlStatement)
+
+	handleError(err)
+
+}
