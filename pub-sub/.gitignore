@@ -1,0 +1,7 @@
+venv/
+
+trial.py
+
+env.sh
+
+__pycache__
