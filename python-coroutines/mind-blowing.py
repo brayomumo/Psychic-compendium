@@ -4,7 +4,7 @@ from time import sleep
 class Parent:
     """
     This is parent class to manage a set of child coroutine which
-    will process incoming data asynchronously. 
+    will process incoming data asynchronously.
     """
 
     def __init__(self, no_of_workers: int):
@@ -26,14 +26,14 @@ class Parent:
 
         # intiate parent listener
         next(self.job)
-    
+
     def _stop(self):
         for worker in self._availabe_workers:
             worker.stop()
 
         # clean up parent listener
         self.job.close()
-    
+
     def __spin_up_child_workers(self):
         """
         This spins up new child workers.
@@ -50,7 +50,6 @@ class Parent:
         This listens for work Items and passes them down to child processes.
         """
         try:
-            
             while self._active_worker_count > 0:
                 try:
                     worker = self._availabe_workers.pop()
@@ -62,8 +61,7 @@ class Parent:
                     self.__spin_up_child_workers()
                     continue
 
-
-                work_item = yield 
+                work_item = yield
                 worker.process(work_item)
 
         except GeneratorExit:
@@ -71,10 +69,7 @@ class Parent:
             self._stop()
 
 
-    
-
 class Child:
-
     def __init__(self, count: int):
         self.is_available = True
         self.my_coroutine = operation_coroutine(count)
@@ -84,35 +79,27 @@ class Child:
         self.is_available = False
 
         #  parse payload
-        local_data = {
-            "func": sleep,
-            "args": data
-        }
+        local_data = {"func": sleep, "args": data}
         self.my_coroutine.send(local_data)
         self.is_available = True
 
     def stop(self):
         """
-            Cleanup coroutines attached to object
+        Cleanup coroutines attached to object
         """
         self.my_coroutine.close()
-        
-        
-
-
-
 
 
 def operation_coroutine(count):
     """
-        This is a coroutine to perform the actual operation
-        This used as the main function in the child processes.
+    This is a coroutine to perform the actual operation
+    This used as the main function in the child processes.
     """
     try:
         while True:
             line = yield
             print(f"Workload - {line} - picked by worker {count}")
-            func = line['func']
+            func = line["func"]
             func(line["args"])
 
     except GeneratorExit:
@@ -124,6 +111,5 @@ if __name__ == "__main__":
 
     for i in range(10):
         paren.job.send(i)
-    
+
     paren._stop()
-        

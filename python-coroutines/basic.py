@@ -10,9 +10,10 @@ def simple_coroutine(pattern: str) -> Generator[str, str, None]:
     """
     print("Coroutine is ready!")
     while True:
-        line = (yield str)
+        line = yield str
         if pattern in line:
             print(line)
+
 
 if __name__ == "__main__":
     # get coroutine
@@ -24,10 +25,10 @@ if __name__ == "__main__":
     # send random data to coroutine
     for i in range(100):
         line = f"This is random - {i}"
-        if i%2 == 0:
+        if i % 2 == 0:
             line = f"This is valid line - brian - {i}"
-        
+
         rtn.send(line)
 
-    # close coroutine 
+    # close coroutine
     rtn.close()
