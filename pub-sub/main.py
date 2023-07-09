@@ -14,10 +14,11 @@ SERVER_NAME = os.getenv("SERVER_NAME", "localhost")
 
 
 class Publisher:
-    """Publish messages to an exchange. The exchange is responsible for 
-        recieving messages from the publisher and pushing to respective
-        queues
+    """Publish messages to an exchange. The exchange is responsible for
+    recieving messages from the publisher and pushing to respective
+    queues
     """
+
     def __init__(self, connection_string: str, server_name: str):
         self.param = pika.URLParameters(connection_string)
         self.server_name = server_name
@@ -28,8 +29,7 @@ class Publisher:
         self.channel = self.connection.channel()
 
         self.channel.exchange_declare(
-            exchange=self.server_name,
-            exchange_type=ExchangeType.direct
+            exchange=self.server_name, exchange_type=ExchangeType.direct
         )
         print("Initialized publisher")
 
@@ -45,27 +45,28 @@ class Publisher:
 
         print(f"published body: {body}")
         return True
-    
+
     def kimbia(self, method: str):
         """Publish bulk message wrapped in an iterator
         :param str method: This is the method to be applied to all
                             the data published.
-        :param iter iterator: This is an iterator from which the 
+        :param iter iterator: This is an iterator from which the
                             data is fetched from.
         """
         for data in generate_dummy_data():
             self._publish(method, data)
-        
+
 
 def generate_dummy_data():
-    for i in range(100,500):
+    for i in range(100, 500):
         body = {
             "id": i,
             "name": f"Brian mumo-{i}",
             "email": f"brian.mumo.{i}@mail.com",
-            "version": "1.0.0"
+            "version": "1.0.0",
         }
         yield body
+
 
 if __name__ == "__main__":
     # start publisher
@@ -74,10 +75,7 @@ if __name__ == "__main__":
     pub = Publisher(connection_string, SERVER_NAME)
     consumer = Consumer(connection_string, SERVER_NAME)
 
-    jobs = [
-        Job(pub, True, "User_Publisher"),
-        Job(consumer)
-    ]
+    jobs = [Job(pub, True, "User_Publisher"), Job(consumer)]
     threadManager = Manager(jobs, 1)
     threadManager.run()
     # while True:
