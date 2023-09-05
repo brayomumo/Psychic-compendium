@@ -1,5 +1,4 @@
 from collections.abc import Generator
-from time import sleep
 
 
 def simple_coroutine(pattern: str) -> Generator[str, str, None]:
