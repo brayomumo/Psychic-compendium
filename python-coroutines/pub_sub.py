@@ -45,5 +45,4 @@ def main():
     for data in producer():
         consumer.send(data)
 
-if __name__ == "__main__":
-    main()
+# main()

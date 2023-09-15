@@ -1,3 +1,4 @@
+import typing
 from time import sleep
 
 
@@ -8,14 +9,14 @@ class Parent:
     """
 
     def __init__(self, no_of_workers: int):
-        self._worker_count = no_of_workers
-        self._active_worker_count = 0
+        self._worker_count: int = no_of_workers
+        self._active_worker_count: int = 0
 
         # list of active coroutines waiting to process data
-        self._availabe_workers = []
+        self._availabe_workers: typing.List[Child] = []
 
         # create parent listener
-        self.job = self.process_workload()
+        self.job: typing.Generator = self.process_workload()
 
         # start up parent
         self._start()
@@ -52,7 +53,7 @@ class Parent:
         try:
             while self._active_worker_count > 0:
                 try:
-                    worker = self._availabe_workers.pop()
+                    worker: Child = self._availabe_workers.pop()
                     if not worker.is_available:
                         # worker is processing another item, pick another one
                         continue
@@ -71,7 +72,7 @@ class Parent:
 
 class Child:
     def __init__(self, count: int):
-        self.is_available = True
+        self.is_available: bool  = True
         self.my_coroutine = operation_coroutine(count)
         next(self.my_coroutine)
 
