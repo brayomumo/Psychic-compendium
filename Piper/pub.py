@@ -27,10 +27,12 @@ def manager(publisher, consumer, no_of_publishers, no_of_workers):
     # listner process
     listner = Process(target=consumer, args=(no_of_workers, pipe)).start()
 
-    with pool.Pool(processes=no_of_publishers) as pooler:
+    with pool.Pool(processes=no_of_publishers, maxtasksperchild=3) as pooler:
         results = pooler.apply_async(producer_handler, (publisher, pipe))
 
         results.wait()
+        pooler.close()
+        pooler.join()
 
 
-manager(dummy_publisher, consumer, 5, 2)
+# manager(dummy_publisher, consumer, 5, 2)
