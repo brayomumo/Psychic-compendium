@@ -52,6 +52,7 @@ def consumer_handler(
                 # handle data in a threads to allow for multiple consumers
                 # without blocking.
                 executor.submit(consumer_func, *args)
+                # consumer_func(*args)
             except (KeyboardInterrupt, SystemExit):
                 LOGGER.warning(f"{consumer_name} Consumer Exiting")
                 break
@@ -133,21 +134,22 @@ def advanced_manager(
     )
     producer_process.start()
 
-    while True:
-        try:
-            time.sleep(producer_wait_time)
-            if not producer_process.is_alive():
-                producer_process = Process(
-                    target=producer_handler,
-                    args=(producer_name, producer_func, producer_opts, cons_gen),
-                )
-                producer_process.start()
-        except (KeyboardInterrupt, SystemExit):
-            logging.warning(f"Producer {producer_name} Exiting!")
-            break
-        except Exception as e:
-            logging.error(f"{producer_name} got error - {e}")
-            break
+    # Continously check if producer process is running
+    # while True:
+    #     try:
+    #         # time.sleep(producer_wait_time)
+    #         if not producer_process.is_alive():
+    #             producer_process = Process(
+    #                 target=producer_handler,
+    #                 args=(producer_name, producer_func, producer_opts, cons_gen),
+    #             )
+    #             producer_process.start()
+    #     except (KeyboardInterrupt, SystemExit):
+    #         logging.warning(f"Producer {producer_name} Exiting!")
+    #         break
+    #     except Exception as e:
+    #         logging.error(f"{producer_name} got error - {e}")
+    #         break
 
     # cleanup
     cons_gen.close()
@@ -168,10 +170,10 @@ class Complex:
         return f"Smoucha's complex Mind - {self._name} - {self._index}"
 
 
-def main():
-    def create_complex_data(num: int):
-        for i in range(num or 100):
-            yield ((Complex(f"Jina-{i}", i), i), time.now())
+def main(limit = 100):
+    def create_complex_data():
+        for i in range(limit):
+            yield ((Complex(f"Jina-{i}", i), i), datetime.datetime.now())
 
     def process_complex_data(data, index):
         if data._index == index:
@@ -186,8 +188,7 @@ def main():
         producer_func=create_complex_data,
         consumer_name="process_complex_obj",
         consumer_func=process_complex_data,
-        producer_wait_time=5,
-        producer_opts={"num": 100},
+        producer_wait_time=5
     )
 
 
@@ -203,5 +204,4 @@ def main():
 #             producer_opts=getattr(self, "producer_opts", {}),
 #         )
 
-if __name__ == "__main__":
-    main()
+# main(limit=1000)
