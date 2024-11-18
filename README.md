@@ -7,3 +7,4 @@ Collection of PoC to feed my demons
 3. Demo on coroutines in python
 4. PoC on goroutines and Channels for a Pub-sub architecture
 5. Piper - PoC on using pipes for IPC(Inter-Process Communication)
+6. g_to_RPC - A production ready gRPC example covering all concepts of RPC with Go & python
