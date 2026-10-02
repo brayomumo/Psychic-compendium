@@ -221,10 +221,10 @@ exit=2
 
 Ctrl+C exits with 130 and SIGTERM with 143, after every `finally` has run.
 Measured: a 1000-job dispatcher run exits within about 12 ms of either
-signal. A 100-item threaded run exits within 15 to 44 ms, whether the signal
-lands in the inline phase or while the bridge is busy; there, the wait is
-bounded by the 50 ms item in progress. No processes or threads are left
-behind.
+signal. Across two runs, a 100-item threaded run exited 10 to 108 ms after the
+signal, whether it landed in the inline phase or while the bridge was busy.
+In the busy case the wait includes finishing the 50 ms item in progress, plus
+interpreter shutdown. No processes or threads are left behind.
 
 | Make variable | Default | Used for |
 |---|---|---|
