@@ -1,3 +1,3 @@
-module github.com/brayomumo/Psychic-compendium
+module github.com/brayomumo/Psychic-compendium/go-concurrency
 
-go 1.18
+go 1.22
