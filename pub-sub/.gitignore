@@ -1,7 +1,9 @@
+.venv/
 venv/
+__pycache__/
+.mypy_cache/
+.ruff_cache/
 
-trial.py
-
+# Local, uncommitted: connection secrets and scratch files.
 env.sh
-
-__pycache__
+trial.py
