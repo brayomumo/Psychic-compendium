@@ -1,0 +1,22 @@
+services:
+    api:
+      build: .
+      expose:
+        - "8080:8080"
+      depends_on:
+        - db
+
+    db:
+      image: "postgres"
+      restart: always
+      environment:
+          - POSTGRES_USER=app
+          - POSTGRES_PASSWORD=app
+      ports:
+          - "5432:5432"
+      volumes:
+        - database:/var/lib/postgresql
+
+
+volumes:
+  database:
