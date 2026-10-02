@@ -94,9 +94,13 @@ A prototype change is done when every box is ticked:
   commit that replaces it.
 - **Fixups:** use `git commit --fixup <sha>`, then `git rebase --autosquash main` (non-interactive,
   git 2.44 or newer). Interactive rebases are not used.
-- **Importing an idea branch:** start a new branch from `main`. Import the original files in one
-  commit that keeps the original author (`--author="Name <email>"`) and names the source branch and
-  commit. Put the fixes on top, and leave the original branch untouched.
+- **Importing an idea branch:**
+  - Start a new branch from `main`. Import the original files verbatim in one commit.
+  - Take the author from the source commit (`git show -s --format='%an <%ae>' <sha>`), and pass it
+    with `--author`. Name the source branch and commit in the message.
+  - Verify the import is verbatim by comparing blob hashes (`git rev-parse <sha>:<path>`). Only this
+    commit may fail lint.
+  - Put the fixes on top, and leave the original branch untouched.
 - **Stacked work** (a branch built on another unmerged branch) gets a pull request whose base is the
   parent branch. GitHub retargets it once the parent merges.
 - **Merge order:**
@@ -132,6 +136,18 @@ A prototype change is done when every box is ticked:
   with jitter*). Authentication and authorization failures are fatal, not retried.
 - **Determinism where it matters.** Randomness is seedable (a `-seed`/`--seed` flag, default 1). Tests
   never depend on timing luck.
+- **Sentinels are private `enum.Enum` members** (or unexported values in Go) compared by identity,
+  never in-band data values. Anything a caller can send is data.
+- **Extract on the second duplicate** within a prototype (e.g. a shared `cli.py`), never across
+  prototypes.
+- **Thread ownership.**
+  - Every thread is named and joined by exactly one owner.
+  - Worker exceptions are recorded under a lock and re-raised once in the owner, with `add_note()`
+    naming the thread. A secondary error is logged with its traceback, never dropped.
+  - Blocking waits on a peer use `timeout=` loops that re-check the peer is alive. The interval is a
+    named constant, documented as never delaying data.
+- **Two shutdown modes.** A normal `close()` drains, and any other exception (Ctrl+C included) aborts
+  after the current item. Where both matter, a context-manager helper encodes the choice.
 - **Never report success on a partial result.** If work can go missing without cancellation, that is
   a bug: fail loudly with exit 1.
 - **Comments explain why, not what.** Public functions, types and packages carry doc comments. No dead
@@ -384,7 +400,16 @@ once, `make -j check` to run them in parallel, and `make list` to show what it f
 - **Keep integration tests separate:** `tests/test_integration.py` (or a build tag in Go), skipped
   unless `<PROTO>_INTEGRATION=1` is set and the service answers. Each test uses unique resource names,
   and they run via `make test-integration`.
-- **Stress concurrency before reporting.** Go: `go test -race -count=10 -cpu 1,2,8 ./...`.
+- **Stress concurrency before reporting.** Go: `go test -race -count=10 -cpu 1,2,8 ./...`. Python: 50
+  sequential runs under `-X dev`, plus a run with 8 suites in parallel.
+- **A mutant that hangs the suite is a test-design defect.** Fix the test so it fails instead. The
+  watchdog base class exists for this.
+- **Test seams without API changes.** Swap collaborators with `mock.patch.object(queue, "Queue",
+  factory)` and similar, rather than adding test-only parameters.
+- **Trigger Ctrl+C tests from a structural event** (e.g. the producer is blocked), never a timer:
+  `os.kill(os.getpid(), SIGINT)` from inside the code under test.
+- **Simulate CPU work with `time.thread_time()`.** Wall-clock spinning fakes parallel speedups under
+  the GIL. Simulate I/O with `time.sleep`.
 
 ### Signal tests
 - **A process started with `&` from a non-interactive shell begins with SIGINT ignored (`SIG_IGN`).**
@@ -534,6 +559,9 @@ These are the designs the prototypes validated. Reuse them rather than reinventi
   being released, or the same workload in-process vs across processes.
 - **Measure end to end:** until every item is processed, with nothing printed in the hot path.
 - **Show both sides of a trade-off,** e.g. a trivial workload alongside a CPU-bound one.
+- **Report the range observed across runs,** not the best run.
+- **Demos whose results depend on the GIL print `sys._is_gil_enabled()`,** falling back to `True` on
+  versions without it.
 - **Verify each run's result** before its time counts. A fast wrong answer isn't a data point.
 - **Give every benchmark a `--quick` smoke mode** that the test suite runs, so it can't rot.
 - **Commit raw numbers only in the README,** in a `## Benchmark` section after `## Test`, next to the
