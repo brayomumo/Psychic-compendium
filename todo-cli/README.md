@@ -218,7 +218,8 @@ The test layers mirror the code:
 - `repl` runs scripted sessions against an in-memory store with a fixed clock,
   plus cancellation tests synchronised on prompts instead of sleeps.
 - `cmd/todo` drives `run()` directly. It also re-executes the test binary as
-  the real program, to deliver real SIGINT, SIGTERM and SIGPIPE.
+  the real program, to deliver real SIGINT and SIGTERM and to close its
+  stdout.
 
 ## Failure modes
 
@@ -240,7 +241,7 @@ The test layers mirror the code:
 | Data path unreadable (e.g. a directory) | Exit 1 with a read error, not "corrupt" | Read errors and content errors are kept apart | `TestUnreadableFileIsAFailure`, `TestLoadUnreadableFileIsNotReportedAsCorrupt` |
 | Data file is a symlink | Target updated, link kept | `filepath.EvalSymlinks` before the rename | `TestSaveFollowsSymlink` |
 | SIGINT / SIGTERM at a prompt or halfway through adding | Exit 130 / 143; confirmed changes kept; half-entered task dropped; no temp files | Context cancelled with the signal as cause; saves are never interrupted | `TestSignalShutsDownCleanlyAndKeepsData`, `TestCancelWhileWaitingForInput`, `TestCancellationWinsOverWaitingInput` |
-| Output reader goes away (`todo \| head -1`) | Killed by SIGPIPE, like `cat` or `grep`; saved data intact | Go runtime default for stdout | `TestClosedStdoutEndsWithSIGPIPEAndKeepsData` |
+| Output reader goes away (`todo \| head -1`) | Exit 1 with `write output: … broken pipe` on stderr; saved data intact | `main` ignores SIGPIPE, so the write fails with EPIPE instead of the runtime killing the process | `TestClosedStdoutExitsOneAndKeepsData` |
 | Output writer fails (not stdout) | Session ends with the write error, exit 1 | First write error is recorded and checked after every command | `TestWriteFailureEndsSession` |
 | Input read error | Exit 1, `read input: …` | Scanner error surfaced | `TestReadFailureIsAnError` |
 | Bad flags, stray arguments, empty `-file` | Exit 2 with a usage message | `flag.ContinueOnError` | `TestUsage` |

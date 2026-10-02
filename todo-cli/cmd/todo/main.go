@@ -33,6 +33,11 @@ const (
 )
 
 func main() {
+	// With SIGPIPE at its default, the Go runtime kills the process when a
+	// write to stdout hits a closed pipe (todo | head -1). Ignoring it turns
+	// that into an EPIPE write error, which ends the session with exit 1 like
+	// any other local I/O failure.
+	signal.Ignore(syscall.SIGPIPE)
 	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }
 

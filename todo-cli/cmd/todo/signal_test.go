@@ -170,9 +170,11 @@ func TestEndOfInputExitsZero(t *testing.T) {
 	}
 }
 
-// Like any Unix filter (cat, grep), todo is ended by SIGPIPE when whatever
-// reads its output goes away, e.g. todo | head -1. Saved data is unaffected.
-func TestClosedStdoutEndsWithSIGPIPEAndKeepsData(t *testing.T) {
+// A reader that goes away (todo | head -1) is a local I/O failure: the next
+// write fails with EPIPE and the session ends with exit 1 and a message,
+// rather than the process being killed by SIGPIPE mid-line. Saved data is
+// unaffected either way.
+func TestClosedStdoutExitsOneAndKeepsData(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "tasks.json")
 	c := startChild(t, path)
 	c.send(t, "e\nBuy milk\n\n")
@@ -180,20 +182,21 @@ func TestClosedStdoutEndsWithSIGPIPEAndKeepsData(t *testing.T) {
 	if err := c.stdoutPipe.Close(); err != nil {
 		t.Fatal(err)
 	}
-	// Ask for listings until the child dies writing one. Our own writes
-	// start failing once it has exited; that is expected.
+	// Ask for listings until a write fails. Our own writes start failing
+	// once the child has exited; that is expected.
 	for range 1000 {
 		if _, err := io.WriteString(c.stdin, "a\n"); err != nil {
 			break
 		}
 	}
-	c.waitExit(t)
-	ws, ok := c.cmd.ProcessState.Sys().(syscall.WaitStatus)
-	if !ok || !ws.Signaled() || ws.Signal() != syscall.SIGPIPE {
-		t.Errorf("child ended with %v, want termination by SIGPIPE", c.cmd.ProcessState)
+	if code := c.waitExit(t); code != exitFailure {
+		t.Errorf("child ended with %v, want exit %d", c.cmd.ProcessState, exitFailure)
+	}
+	if !strings.Contains(c.stderr.String(), "broken pipe") {
+		t.Errorf("stderr = %q, want the write error reported", c.stderr)
 	}
 	l, err := store.NewFile(path).Load()
 	if err != nil || len(l.All()) != 1 {
-		t.Errorf("data after SIGPIPE: %v (err %v), want the saved task", l, err)
+		t.Errorf("data after closed stdout: %v (err %v), want the saved task", l, err)
 	}
 }
