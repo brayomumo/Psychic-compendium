@@ -383,6 +383,12 @@ once, `make -j check` to run them in parallel, and `make list` to show what it f
   starts them with SIGINT ignored to prove it.
 - **In-process Python signal tests** use `threading.Timer` plus `os.kill`, and check the exit code and
   that the previous handler was restored.
+- **Wait for the readiness banner before signalling, never a fixed delay.** A signal that arrives
+  before the handlers are installed is lost or kills by default, and macOS can delay the first
+  launch of a newly built binary by seconds. Verification scripts SIGKILL after a deadline so they
+  can't hang.
+- **Every claim about a second signal gets a test.** For example, prove a deliberately hung shutdown
+  dies on the second SIGINT, and mutation-check that the test fails without the mechanism.
 - **Two signals sent back to back can merge into one** under POSIX. Wait for the first signal's notice
   line before sending the second.
 
@@ -431,6 +437,7 @@ toolchain with that toolchain (for example "Apple clang 17").
 - The first signal writes a one-line notice to stderr and starts the graceful path. In Python signal
   handlers, write it with `os.write`, which is async-signal-safe. A second signal exits immediately with
   `128 + n`.
+- A cancellation that no signal caused (an internal cancel) exits 1, never 130 or 143.
 - Workers and children don't install their own handlers unless the design requires it, and then the
   README says why.
 
