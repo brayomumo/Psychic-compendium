@@ -3,7 +3,7 @@
 How do you publish and consume through RabbitMQ without losing messages, and
 keep running when the broker restarts or someone sends a message that can
 never be processed? This prototype answers that with one publisher process and
-one consumer process (Python, pika's blocking adapter, RabbitMQ 4.1). It
+one consumer process (Python, pika 1.4's blocking adapter, RabbitMQ 4.1). It
 backs every claim below with a test that runs against a real broker.
 
 ## Concept
@@ -176,6 +176,7 @@ b4fde29f-c6e2-41d4-9946-9e12ce0a83c0
 ```
 
 The management UI is at <http://localhost:15679> (guest / guest).
+
 `make broker-down` removes the container.
 
 ### Configuration
@@ -249,7 +250,7 @@ $ make check
 ...
 Success: no issues found in 23 source files
 ...
-Ran 78 tests in 2.080s
+Ran 78 tests in 1.937s
 
 OK (skipped=1)
 ```
@@ -276,7 +277,7 @@ test_queue_declared_with_other_arguments_is_reported ... ok
 test_wrong_password_fails_fast_instead_of_retrying ... ok
 test_a_message_that_keeps_failing_hits_the_delivery_limit ... ok
 test_malformed_messages_are_dead_lettered ... ok
-Ran 12 tests in 14.944s
+Ran 12 tests in 16.533s
 OK
 ```
 
@@ -377,12 +378,13 @@ The rebuild turned up four more surprises, each found by a failing test:
   on the third delivery either way). A consumer that restarts while holding
   prefetched messages pushes healthy messages toward the DLQ. That is why the
   limit defaults to 20 and prefetch to 10.
-- **pika names handshake failures after the stage, not the cause.** When a
-  restarting broker drops the socket, the error is `IncompatibleProtocolError`
-  or `ProbableAuthenticationError`. The first classifier treated those as
-  fatal, and the restart test failed. Only an explicit 403 or 530 in the
-  message is a real refusal. Docker adds to the confusion: its port forwarder
-  accepts the TCP connection while the broker is down, then closes it.
+- **pika names handshake failures after the stage, not the cause** (1.3
+  and 1.4 alike). When a restarting broker drops the socket, the error is
+  `IncompatibleProtocolError` or `ProbableAuthenticationError`. The first
+  classifier treated those as fatal, and the restart test failed. Only an
+  explicit 403 or 530 in the message is a real refusal. Docker adds to the
+  confusion: its port forwarder accepts the TCP connection while the broker is
+  down, then closes it.
 - **Two quick signals become one.** POSIX does not queue a second identical
   signal while the first is still pending. The force-quit test sent two
   SIGINTs back to back, and the process saw one. The handler now writes a
@@ -426,6 +428,3 @@ The rebuild turned up four more surprises, each found by a failing test:
   length limit or TTL by policy, so poison messages cannot pile up unnoticed.
 - **During an outage the publisher blocks; it does not buffer.** Memory stays
   bounded, and whatever feeds the publisher has to tolerate waiting.
-- **pika 1.3.2** calls the deprecated `datetime.utcfromtimestamp` on Python
-  3.12+ when it decodes header timestamps; a warning appears in the
-  integration tests. pika 1.4.x exists but has not been evaluated here.

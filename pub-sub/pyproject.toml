@@ -3,7 +3,7 @@ name = "pubsub"
 version = "0.1.0"
 description = "Publish and consume through RabbitMQ without losing messages"
 requires-python = ">=3.11"
-dependencies = ["pika>=1.3.2,<1.4"]
+dependencies = ["pika>=1.4.4,<1.5"]
 
 # Canonical lint, format and type-check config for every Python prototype in
 # Psychic-compendium. Copy it verbatim into the prototype directory. Changes
@@ -43,10 +43,11 @@ warn_unreachable = true
 
 # --- pub-sub specific -------------------------------------------------------
 
-# pika ships no type information, and the only third-party stubs (pika-stubs
-# 0.1.3, 2020) are unmaintained and describe an older API. Scope the escape
-# hatch to pika alone; our own code stays fully strict, and pika objects are
-# held behind the typed Protocols in pubsub/broker.py.
+# pika 1.4 has inline annotations but no py.typed marker, so mypy will not use
+# them, and the only third-party stubs (pika-stubs 0.1.3, 2020) describe an
+# older API. Scope the escape hatch to pika alone; our own code stays fully
+# strict, and pika objects are held behind the typed Protocols in
+# pubsub/broker.py.
 [[tool.mypy.overrides]]
 module = ["pika", "pika.*"]
 ignore_missing_imports = true
