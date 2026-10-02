@@ -11,7 +11,7 @@ import main
 from support import PROTOTYPE_DIR, WatchdogTestCase
 
 QUICK = ["--size", "1000", "--samples", "50", "--leak", "100"]
-TIMEOUT_S = 60
+TIMEOUT_S = 30  # Under the 60 s watchdog, so a hang fails cleanly.
 
 
 def run_cli(*args: str) -> subprocess.CompletedProcess[str]:
