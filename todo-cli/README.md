@@ -106,7 +106,7 @@ not free its ID for reuse.
 
 ```console
 $ make demo        # scripted session against a fresh file; exits on its own
-printf 'e\nBuy milk\n2 litres\ne\nWrite README\n\nf\n1\nd\n9\nl\na\nq\n' | ./bin/todo -file .demo-tasks.json
+printf 'e\nBuy milk\n2 litres\ne\nWrite README\n\nf\n1\nd\n9\nl\na\nq\n' | bin/todo -file .demo-tasks.json
 todo: tasks are saved to /…/todo-cli/.demo-tasks.json
 Commands:
   e  add a task
@@ -130,6 +130,15 @@ Commands:
 
 The prompts and answers run together above because piped input is not echoed.
 At a terminal, each answer is on its own line.
+
+**Requirements:** any `go` 1.21 or newer on `PATH`, and nothing else.
+- `go.mod` declares `go 1.26`, the oldest supported release, and pins
+  `toolchain go1.27.1`. Go downloads that toolchain on first use.
+- The Makefile exports `GOTOOLCHAIN` from the `toolchain` line, so builds,
+  tests and linters all use go1.27.1.
+- The linters (staticcheck 2026.2.1, golangci-lint v2.14.0, govulncheck
+  v1.8.0) run pinned through `go run`.
+- The module has no dependencies, so there is no `go.sum`.
 
 ```console
 $ make run                      # interactive; saves to ./tasks.json
@@ -161,34 +170,44 @@ SIGINT and 143 after SIGTERM (128 + signal number).
 | `make run` | Interactive session on `$(DATA_FILE)`. Ends on `q` or Ctrl+D. |
 | `make demo` | Scripted session on a fresh `$(DEMO_FILE)`. Exits on its own. |
 | `make test` | `go test -race -count=1 ./...` |
-| `make lint` | gofmt, `go vet`, staticcheck, golangci-lint (repo-wide `.golangci.yml`). |
-| `make check` | `lint` then `test`. This is the gate. |
-| `make clean` | Removes build output and `$(DEMO_FILE)`. **Never** deletes `$(DATA_FILE)`. |
+| `make lint` | The pinned toolchain's gofmt (`go run cmd/gofmt -l .`), `go vet`, staticcheck, and golangci-lint with the repo-wide v2 `.golangci.yml`. |
+| `make check` | `lint` then `test`. This is the gate. It needs no network once the toolchain and linters are cached. |
+| `make vulncheck` | govulncheck against the Go vulnerability database. It needs network, so it is not part of `check`. It must report "No vulnerabilities found." |
+| `make clean` | Removes `$(BIN)` and `$(DEMO_FILE)`. **Never** deletes `$(DATA_FILE)`. |
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `GO` | `go` | Go command. |
-| `STATICCHECK` | `staticcheck` | staticcheck binary. |
-| `GOLANGCI_LINT` | `golangci-lint` | golangci-lint binary (v1.6x config format). |
+| `GO` | `go` | Go command. Any version from 1.21 up works, because it switches to the pinned toolchain. |
+| `STATICCHECK` | `$(GO) run honnef.co/go/tools/cmd/staticcheck@2026.2.1` | staticcheck command. |
+| `GOLANGCI_LINT` | `$(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0` | golangci-lint command (v2 config format). |
+| `GOVULNCHECK` | `$(GO) run golang.org/x/vuln/cmd/govulncheck@v1.8.0` | govulncheck command. |
 | `BIN` | `bin/todo` | Build output path. |
+| `ARGS` | (empty) | Extra flags passed to `todo` by `make run`. |
 | `DATA_FILE` | `tasks.json` | Data file used by `make run` (gitignored). |
 | `DEMO_FILE` | `.demo-tasks.json` | Data file used by `make demo` (gitignored, recreated each run). |
 
-The Makefile also exports `GOWORK=off`. The module is standalone and must not
-pick up a `go.work` from an enclosing directory.
+The Makefile also exports two fixed settings that are not meant to be
+overridden:
+- `GOWORK=off`: the module is standalone and must not pick up a `go.work`
+  from an enclosing directory.
+- `GOTOOLCHAIN`: read from the `toolchain` line in `go.mod`.
 
 ## Test
 
 ```console
 $ make check
 go vet ./...
-staticcheck ./...
-golangci-lint run ./...
+go run honnef.co/go/tools/cmd/staticcheck@2026.2.1 ./...
+go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0 run ./...
+0 issues.
 go test -race -count=1 ./...
-ok  	github.com/brayomumo/Psychic-compendium/todo-cli/cmd/todo	1.339s
-ok  	github.com/brayomumo/Psychic-compendium/todo-cli/internal/repl	1.632s
-ok  	github.com/brayomumo/Psychic-compendium/todo-cli/internal/store	1.530s
-ok  	github.com/brayomumo/Psychic-compendium/todo-cli/internal/task	1.809s
+ok  	github.com/brayomumo/Psychic-compendium/todo-cli/cmd/todo	2.133s
+ok  	github.com/brayomumo/Psychic-compendium/todo-cli/internal/repl	2.985s
+ok  	github.com/brayomumo/Psychic-compendium/todo-cli/internal/store	1.714s
+ok  	github.com/brayomumo/Psychic-compendium/todo-cli/internal/task	2.510s
+$ make vulncheck
+go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+No vulnerabilities found.
 ```
 
 The test layers mirror the code:
