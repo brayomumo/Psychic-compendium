@@ -38,9 +38,16 @@ func main() {
 	// that into an EPIPE write error, which ends the session with exit 1 like
 	// any other local I/O failure.
 	signal.Ignore(syscall.SIGPIPE)
-	ctx, stop := notifyContext(log.New(os.Stderr, "todo: ", 0))
+	logger := log.New(os.Stderr, "todo: ", 0)
+	ctx, stop := notifyContext(logger)
 	code := run(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr)
-	stop() // os.Exit skips deferred calls
+	// stop runs before os.Exit, which skips deferred calls. A signal that
+	// raced the end of the session (Ctrl+C then Ctrl+D) was received but not
+	// yet seen by run; it still decides the exit status.
+	if sig := stop(); sig != 0 && code < 128 {
+		logger.Printf("stopped by %v; all confirmed changes are saved", sig)
+		code = 128 + int(sig)
+	}
 	os.Exit(code)
 }
 
@@ -95,22 +102,29 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	}
 	logger.Printf("tasks are saved to %s", shown)
 	err = repl.Run(ctx, repl.Config{In: stdin, Out: stdout, Err: stderr, Store: st}, list)
+	return exitStatus(ctx, err, logger)
+}
 
+// exitStatus maps how the session ended to the process exit status.
+//
+// A received signal wins over every other outcome. When end of input races
+// the signal, the session ends with a nil error, and exiting 0 would hide that
+// the process was told to stop.
+func exitStatus(ctx context.Context, err error, logger *log.Logger) int {
 	var sig signalError
-	switch {
-	case err == nil:
-		return exitOK
-	case errors.As(err, &sig):
+	if errors.As(context.Cause(ctx), &sig) || errors.As(err, &sig) {
 		// Every confirmed change was saved before it was confirmed, and a
 		// save in progress is never interrupted, so nothing is lost here.
 		logger.Printf("stopped by %v; all confirmed changes are saved", sig.sig)
 		return 128 + int(sig.sig)
-	default:
+	}
+	if err != nil {
 		// Includes a cancellation no signal caused: that is a failure, never
 		// a clean shutdown (STANDARDS.md section 10).
 		logger.Print(err)
 		return exitFailure
 	}
+	return exitOK
 }
 
 // defaultFile is where tasks live unless -file says otherwise: the per-user
@@ -133,25 +147,47 @@ func (e signalError) Error() string { return "received " + e.sig.String() }
 // signal as the cancellation cause. signal.NotifyContext would not say which
 // signal arrived, and the exit status follows the 128+n convention.
 //
-// The first signal resets handling to the default and then logs a notice, in
-// that order: by the time anyone reads the notice, a second Ctrl+C already
-// terminates the process, even if shutdown hangs.
-func notifyContext(logger *log.Logger) (context.Context, func()) {
+// The first signal resets handling to the default, records the signal as the
+// cause, and then logs a notice, in that order: by the time anyone reads the
+// notice, a second Ctrl+C already terminates the process, and the exit status
+// is already decided.
+//
+// stop releases the signals and returns the signal received, or 0. It waits
+// for the watcher, so a signal the watcher has taken is never lost, and it
+// collects one that arrived but was not yet taken.
+func notifyContext(logger *log.Logger) (context.Context, func() syscall.Signal) {
 	ctx, cancel := context.WithCancelCause(context.Background())
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
+	var received syscall.Signal
+	record := func(s os.Signal) {
+		received, _ = s.(syscall.Signal) // always a syscall.Signal on Unix
+		cancel(signalError{sig: received})
+		logger.Printf("received %v, finishing up (send it again to quit at once)", received)
+	}
+	done := make(chan struct{})
+	finished := make(chan struct{})
 	go func() {
+		defer close(finished)
 		select {
 		case s := <-signals:
 			signal.Stop(signals)
-			sig, _ := s.(syscall.Signal) // always a syscall.Signal on Unix
-			logger.Printf("received %v, finishing up (send it again to quit at once)", sig)
-			cancel(signalError{sig: sig})
-		case <-ctx.Done():
+			record(s)
+		case <-done:
 		}
 	}()
-	return ctx, func() {
-		signal.Stop(signals)
+	return ctx, func() syscall.Signal {
+		signal.Stop(signals) // no further signals reach the channel
+		close(done)
+		<-finished // the watcher has recorded whatever it took
+		if received == 0 {
+			select {
+			case s := <-signals: // arrived before Stop, not yet taken
+				record(s)
+			default:
+			}
+		}
 		cancel(nil)
+		return received
 	}
 }

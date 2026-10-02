@@ -84,6 +84,35 @@ func TestCancellationCauseSelectsExitStatus(t *testing.T) {
 	}
 }
 
+// Regression: when end of input raced a signal, the session ended with a nil
+// error and the process exited 0, hiding that it had been told to stop.
+func TestExitStatusSignalWinsOverEndOfInput(t *testing.T) {
+	tests := []struct {
+		name     string
+		cause    error
+		err      error
+		wantCode int
+	}{
+		{"signal then clean end", signalError{sig: syscall.SIGTERM}, nil, 143},
+		{"signal then failure", signalError{sig: syscall.SIGINT}, errors.New("write output: broken pipe"), 130},
+		{"no signal, clean end", nil, nil, exitOK},
+		{"no signal, failure", nil, errors.New("write output: broken pipe"), exitFailure},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancelCause(context.Background())
+			defer cancel(nil)
+			if tc.cause != nil {
+				cancel(tc.cause)
+			}
+			var errOut bytes.Buffer
+			if got := exitStatus(ctx, tc.err, log.New(&errOut, "todo: ", 0)); got != tc.wantCode {
+				t.Errorf("exitStatus = %d, want %d (stderr %q)", got, tc.wantCode, errOut.String())
+			}
+		})
+	}
+}
+
 func TestUsage(t *testing.T) {
 	tests := []struct {
 		name     string

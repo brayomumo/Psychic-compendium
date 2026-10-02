@@ -181,6 +181,33 @@ func TestEndOfInputExitsZero(t *testing.T) {
 	}
 }
 
+// Regression: a signal immediately followed by end of input (Ctrl+C then
+// Ctrl+D, or a script closing stdin) printed "finishing up" and then exited 0,
+// because the session ended on end of input before the signal was recorded.
+// Repeated, because the outcome used to depend on scheduling.
+func TestSignalRacingEndOfInputStillDecidesExitStatus(t *testing.T) {
+	for _, tc := range []struct {
+		sig  syscall.Signal
+		want int
+	}{{syscall.SIGINT, 130}, {syscall.SIGTERM, 143}} {
+		t.Run(tc.sig.String(), func(t *testing.T) {
+			for range 10 {
+				c := startChild(t, filepath.Join(t.TempDir(), "tasks.json"))
+				c.expect(t, "> ")
+				if err := c.cmd.Process.Signal(tc.sig); err != nil {
+					t.Fatal(err)
+				}
+				if err := c.stdin.Close(); err != nil {
+					t.Fatal(err)
+				}
+				if code := c.waitExit(t); code != tc.want {
+					t.Fatalf("exit code = %d, want %d; stderr:\n%s", code, tc.want, c.stderr)
+				}
+			}
+		})
+	}
+}
+
 // A reader that goes away (todo | head -1) is a local I/O failure: the next
 // write fails with EPIPE and the session ends with exit 1 and a message,
 // rather than the process being killed by SIGPIPE mid-line. Saved data is
