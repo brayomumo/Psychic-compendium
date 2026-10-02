@@ -1,115 +1,325 @@
-from time import sleep
+"""A parent coroutine fanning jobs out to N workers, beside the asyncio way.
+
+The generator version is a *dispatch* pattern, not a concurrency pattern.
+``send()`` is a function call: the parent hands a job to a worker and gets
+control back only when the worker reaches its next ``yield``, i.e. after the
+job is done. Exactly one job is in flight, however many workers exist.
+Concurrency needs an event loop that can suspend a job *while it waits* and run
+another; the asyncio pool has one. The demo times both on the same workload.
+
+Run ``python3 dispatcher.py --help`` for options.
+"""
+
+import argparse
+import asyncio
+import itertools
+import math
+import signal
+import sys
+import time
+from collections import Counter
+from collections.abc import Awaitable, Callable, Generator, Iterable, Sequence
+from dataclasses import dataclass
+from types import FrameType
+from typing import Generic, TypeVar
+
+from prime import Sink, coroutine, forward
+
+J = TypeVar("J")
+R = TypeVar("R")
+
+MAX_WORKERS = 1000
+MAX_JOBS = 1_000_000
+MAX_JOB_SECONDS = 60.0
 
 
-class Parent:
+@dataclass(frozen=True)
+class Outcome(Generic[J, R]):
+    """What happened to one job: its value, or the exception it raised."""
+
+    worker_id: int
+    job: J
+    value: R | None = None
+    error: Exception | None = None
+
+    @property
+    def ok(self) -> bool:
+        """Whether the job completed without raising."""
+        return self.error is None
+
+
+# --- Generator coroutines: dispatch, one job at a time ----------------------
+
+
+@coroutine
+def worker(
+    worker_id: int,
+    func: Callable[[J], R],
+    on_outcome: Callable[[Outcome[J, R]], object],
+) -> Generator[None, J, None]:
+    """Run ``func`` on each job sent in and report how it went.
+
+    Per-job errors are caught here because an exception that escapes a
+    generator ends it for good; a worker that let one bad job propagate could
+    never serve another.
+
+    Args:
+        worker_id: Identifies this worker in outcomes.
+        func: The job handler.
+        on_outcome: Receives one :class:`Outcome` per job. If it raises, the
+            exception propagates and this worker ends.
     """
-    This is parent class to manage a set of child coroutine which
-    will process incoming data asynchronously.
-    """
-
-    def __init__(self, no_of_workers: int):
-        self._worker_count = no_of_workers
-        self._active_worker_count = 0
-
-        # list of active coroutines waiting to process data
-        self._availabe_workers = []
-
-        # create parent listener
-        self.job = self.process_workload()
-
-        # start up parent
-        self._start()
-
-    def _start(self):
-        # create child workers
-        self.__spin_up_child_workers()
-
-        # intiate parent listener
-        next(self.job)
-
-    def _stop(self):
-        for worker in self._availabe_workers:
-            worker.stop()
-
-        # clean up parent listener
-        self.job.close()
-
-    def __spin_up_child_workers(self):
-        """
-        This spins up new child workers.
-        """
-        print("spinning up new workers!!")
-        self._worker_count = 0
-        for i in range(self._worker_count):
-            child = Child(i)
-            self._availabe_workers.append(child)
-            self._active_worker_count += 1
-
-    def process_workload(self):
-        """
-        This listens for work Items and passes them down to child processes.
-        """
+    while True:
+        job = yield
         try:
-            while self._active_worker_count > 0:
-                try:
-                    worker = self._availabe_workers.pop()
-                    if not worker.is_available:
-                        # worker is processing another item, pick another one
-                        continue
-                except IndexError:
-                    print(f"No available worker to pick up jobs!")
-                    self.__spin_up_child_workers()
-                    continue
-
-                work_item = yield
-                worker.process(work_item)
-
-        except GeneratorExit:
-            print(f"Parent exiting!")
-            self._stop()
+            value = func(job)
+        except Exception as exc:  # reported in the Outcome, not swallowed
+            on_outcome(Outcome(worker_id, job, error=exc))
+        else:
+            on_outcome(Outcome(worker_id, job, value=value))
 
 
-class Child:
-    def __init__(self, count: int):
-        self.is_available = True
-        self.my_coroutine = operation_coroutine(count)
-        next(self.my_coroutine)
+@coroutine
+def round_robin(workers: Sequence[Sink[J]]) -> Generator[None, J, None]:
+    """Parent coroutine: give each job to the next worker in turn.
 
-    def process(self, data: int):
-        self.is_available = False
+    The parent owns its workers. ``close()`` raises ``GeneratorExit`` at the
+    parent's ``yield`` and its ``finally`` closes every worker. The parent only
+    closes its children, never itself, so nothing re-enters a running
+    generator.
 
-        #  parse payload
-        local_data = {"func": sleep, "args": data}
-        self.my_coroutine.send(local_data)
-        self.is_available = True
+    Args:
+        workers: Primed worker coroutines, closed when the parent stops.
 
-    def stop(self):
-        """
-        Cleanup coroutines attached to object
-        """
-        self.my_coroutine.close()
-
-
-def operation_coroutine(count):
-    """
-    This is a coroutine to perform the actual operation
-    This used as the main function in the child processes.
+    Raises:
+        ValueError: ``workers`` is empty.
+        RuntimeError: A worker was closed by something other than the parent.
     """
     try:
-        while True:
-            line = yield
-            print(f"Workload - {line} - picked by worker {count}")
-            func = line["func"]
-            func(line["args"])
+        if not workers:
+            raise ValueError("round_robin needs at least one worker")
+        for worker_id, target in itertools.cycle(enumerate(workers)):
+            job = yield
+            if not forward(target, job):
+                raise RuntimeError(f"worker {worker_id} was closed externally")
+    finally:
+        for target in workers:
+            target.close()
 
-    except GeneratorExit:
-        print(f"worker {count} exiting!")
+
+def make_pool(
+    size: int,
+    func: Callable[[J], R],
+    on_outcome: Callable[[Outcome[J, R]], object],
+) -> Sink[J]:
+    """Create ``size`` workers behind a round-robin parent.
+
+    Args:
+        size: Number of workers, 1 to ``MAX_WORKERS``.
+        func: The job handler.
+        on_outcome: Receives one :class:`Outcome` per job.
+
+    Returns:
+        The parent coroutine. ``close()`` it when done.
+
+    Raises:
+        ValueError: ``size`` is out of range.
+    """
+    if not 1 <= size <= MAX_WORKERS:
+        raise ValueError(f"size must be in 1..{MAX_WORKERS}, got {size}")
+    return round_robin([worker(i, func, on_outcome) for i in range(size)])
+
+
+# --- asyncio: real concurrency for code that awaits -------------------------
+
+
+async def run_async_pool(
+    jobs: Iterable[J],
+    func: Callable[[J], Awaitable[R]],
+    workers: int,
+    queue_size: int = 1,
+) -> list[Outcome[J, R]]:
+    """Run ``func`` over ``jobs`` on ``workers`` concurrent tasks.
+
+    Jobs overlap only while ``func`` is suspended in an ``await``. A ``func``
+    that blocks (``time.sleep``, CPU work, blocking I/O) holds the event loop's
+    only thread, and the pool is back to one job at a time. The bounded queue
+    is the backpressure: adding a job waits while ``queue_size`` jobs are
+    already queued.
+
+    Args:
+        jobs: The jobs to run.
+        func: Async job handler.
+        workers: Number of worker tasks, 1 to ``MAX_WORKERS``.
+        queue_size: Maximum number of queued jobs, at least 1.
+
+    Returns:
+        One :class:`Outcome` per job, in completion order.
+
+    Raises:
+        ValueError: ``workers`` or ``queue_size`` is out of range.
+    """
+    if not 1 <= workers <= MAX_WORKERS:
+        raise ValueError(f"workers must be in 1..{MAX_WORKERS}, got {workers}")
+    if queue_size < 1:
+        # asyncio.Queue(maxsize=0) is unbounded, which would drop backpressure.
+        raise ValueError(f"queue_size must be >= 1, got {queue_size}")
+
+    queue: asyncio.Queue[J] = asyncio.Queue(maxsize=queue_size)
+    outcomes: list[Outcome[J, R]] = []
+
+    async def serve(worker_id: int) -> None:
+        while True:
+            job = await queue.get()
+            try:
+                value = await func(job)
+            except Exception as exc:  # reported in the Outcome, not swallowed
+                outcomes.append(Outcome(worker_id, job, error=exc))
+            else:
+                outcomes.append(Outcome(worker_id, job, value=value))
+            finally:
+                queue.task_done()
+
+    async with asyncio.TaskGroup() as group:
+        servers = [group.create_task(serve(i)) for i in range(workers)]
+        for job in jobs:
+            await queue.put(job)
+        await queue.join()
+        for server in servers:
+            server.cancel()
+    return outcomes
+
+
+# --- Demo -------------------------------------------------------------------
+
+
+def _bounded_int(low: int, high: int) -> Callable[[str], int]:
+    def parse(text: str) -> int:
+        try:
+            value = int(text)
+        except ValueError:
+            message = f"expected an integer, got {text!r}"
+            raise argparse.ArgumentTypeError(message) from None
+        if not low <= value <= high:
+            message = f"must be in {low}..{high}, got {value}"
+            raise argparse.ArgumentTypeError(message)
+        return value
+
+    return parse
+
+
+def _seconds(text: str) -> float:
+    try:
+        value = float(text)
+    except ValueError:
+        message = f"expected a number, got {text!r}"
+        raise argparse.ArgumentTypeError(message) from None
+    if not math.isfinite(value) or not 0 <= value <= MAX_JOB_SECONDS:
+        message = f"must be in 0..{MAX_JOB_SECONDS:g} seconds, got {text}"
+        raise argparse.ArgumentTypeError(message)
+    return value
+
+
+def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
+    """Parse and validate the demo's command line.
+
+    Args:
+        argv: Arguments without the program name; ``None`` reads ``sys.argv``.
+
+    Returns:
+        The parsed options. Invalid input exits with status 2.
+    """
+    parser = argparse.ArgumentParser(
+        description="Time a generator dispatcher against an asyncio pool."
+    )
+    parser.add_argument(
+        "--jobs", type=_bounded_int(0, MAX_JOBS), default=8, help="default 8"
+    )
+    parser.add_argument(
+        "--workers",
+        type=_bounded_int(1, MAX_WORKERS),
+        default=4,
+        help="default 4",
+    )
+    parser.add_argument(
+        "--job-seconds",
+        type=_seconds,
+        default=0.05,
+        help="simulated wait per job, default 0.05",
+    )
+    return parser.parse_args(argv)
+
+
+def _run_demo(jobs: int, workers: int, job_seconds: float) -> None:
+    print(f"{jobs} jobs x {job_seconds:g}s simulated wait, {workers} workers")
+
+    def blocking_job(job: int) -> int:
+        time.sleep(job_seconds)
+        return job
+
+    async def awaiting_job(job: int) -> int:
+        await asyncio.sleep(job_seconds)
+        return job
+
+    async def blocking_job_in_async_clothing(job: int) -> int:
+        time.sleep(job_seconds)  # never yields to the event loop
+        return job
+
+    outcomes: list[Outcome[int, int]] = []
+    pool = make_pool(workers, blocking_job, outcomes.append)
+    start = time.perf_counter()
+    try:
+        for job in range(jobs):
+            pool.send(job)
+    finally:
+        pool.close()
+    elapsed = time.perf_counter() - start
+    per_worker = dict(sorted(Counter(o.worker_id for o in outcomes).items()))
+    print(f"  generator round-robin  {elapsed:6.3f}s  jobs/worker {per_worker}")
+
+    start = time.perf_counter()
+    asyncio.run(run_async_pool(range(jobs), awaiting_job, workers))
+    elapsed = time.perf_counter() - start
+    print(f"  asyncio, awaiting job  {elapsed:6.3f}s  waits overlap")
+
+    start = time.perf_counter()
+    asyncio.run(
+        run_async_pool(range(jobs), blocking_job_in_async_clothing, workers)
+    )
+    elapsed = time.perf_counter() - start
+    print(
+        f"  asyncio, blocking job  {elapsed:6.3f}s  time.sleep stalls the loop"
+    )
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Time the generator dispatcher against asyncio on simulated I/O.
+
+    Args:
+        argv: Arguments without the program name; ``None`` reads ``sys.argv``.
+
+    Returns:
+        0 on success, 130 after Ctrl+C, 143 after SIGTERM. Usage errors exit
+        with status 2 from argparse.
+    """
+    args = parse_args(argv)
+    signals: list[int] = []
+
+    def on_sigterm(signum: int, frame: FrameType | None) -> None:
+        # Unwind exactly like Ctrl+C so every finally block runs.
+        signals.append(signum)
+        raise KeyboardInterrupt
+
+    previous = signal.signal(signal.SIGTERM, on_sigterm)
+    try:
+        _run_demo(args.jobs, args.workers, args.job_seconds)
+    except KeyboardInterrupt:
+        print("interrupted; workers closed", file=sys.stderr)
+        return 128 + (signals[0] if signals else signal.SIGINT)
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+    return 0
 
 
 if __name__ == "__main__":
-    paren = Parent(5)
-
-    for i in range(10):
-        paren.job.send(i)
-
-    paren._stop()
+    raise SystemExit(main())
