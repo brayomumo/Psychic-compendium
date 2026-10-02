@@ -523,6 +523,10 @@ toolchain with that toolchain (for example "Apple clang 17").
 - The first signal writes a one-line notice to stderr and starts the graceful path. In Python signal
   handlers, write it with `os.write`, which is async-signal-safe. A second signal exits immediately with
   `128 + n`.
+- A printed notice and the exit status never disagree. The signal watcher records the signal (cancel
+  with the signal as cause) *before* printing its notice. `stop()` waits for the watcher to finish and
+  collects a signal that arrived but wasn't taken yet. `main` applies such a late signal to the exit
+  status, because end of input or completion can race the signal (see `todo-cli/cmd/todo/main.go`).
 - A cancellation that no signal caused (an internal cancel) exits 1, never 130 or 143.
 - Workers and children don't install their own handlers unless the design requires it, and then the
   README says why.
