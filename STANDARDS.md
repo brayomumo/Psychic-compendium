@@ -272,6 +272,10 @@ A prototype change is done when every box is ticked:
   - `go vet`, staticcheck, golangci-lint;
   - `go test -race -count=1 ./...`.
 
+  Keep the standalone staticcheck step even though golangci-lint bundles staticcheck: with the
+  default golangci settings, the bundled copy didn't report some checks the standalone one does (e.g.
+  ST1005, error strings capitalised or ending in punctuation).
+
   Linters run pinned through `go run <pkg>@<version>`, as [`templates/Makefile.go`](templates/Makefile.go)
   shows, so no machine needs them installed. `make vulncheck` runs separately, because it needs network
   access to the vulnerability database.
