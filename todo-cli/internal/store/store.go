@@ -138,7 +138,7 @@ func encode(l *task.List) ([]byte, error) {
 	enc := json.NewEncoder(&buf)
 	enc.SetIndent("", "  ")
 	// The file is meant to be read by people; "<b> & co" should not become
-	// "<b> & co". Escaping only matters for embedding in HTML.
+	// "\u003cb\u003e \u0026 co". Escaping only matters for embedding in HTML.
 	enc.SetEscapeHTML(false)
 	if err := enc.Encode(doc); err != nil { // Encode appends the final newline
 		return nil, err
