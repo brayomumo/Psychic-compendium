@@ -1,3 +1,5 @@
+import cProfile
+
 import overhead
 from support import WatchdogTestCase
 
@@ -31,6 +33,19 @@ class OverheadTest(WatchdogTestCase):
     def test_table_has_one_line_per_workload_plus_header(self) -> None:
         table = overhead.format_table(list(self.rows.values()))
         self.assertEqual(len(table.splitlines()), len(self.rows) + 2)
+
+
+class CleanupTest(WatchdogTestCase):
+    def test_profiler_is_disabled_when_the_workload_raises(self) -> None:
+        def explode(_: int) -> int:
+            raise ZeroDivisionError
+
+        with self.assertRaises(ZeroDivisionError):
+            overhead._timed("cprofile", explode, 1, 0.001)
+        # On 3.12+ a profiler left enabled makes this raise ValueError.
+        profiler = cProfile.Profile()
+        profiler.enable()
+        profiler.disable()
 
 
 class ValidationTest(WatchdogTestCase):

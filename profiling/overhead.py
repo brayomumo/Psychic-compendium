@@ -96,8 +96,12 @@ def _timed(
         profiler = cProfile.Profile()
         start = time.perf_counter()
         profiler.enable()
-        result = func(n)
-        profiler.disable()
+        try:
+            result = func(n)
+        finally:
+            # Always unregister: on 3.12+ a profiler left enabled blocks
+            # every later one in this interpreter.
+            profiler.disable()
         return time.perf_counter() - start, result
     if mode == "sampler":
         with Sampler(interval):
