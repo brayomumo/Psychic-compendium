@@ -21,12 +21,12 @@ IS_CLANG := $(findstring clang,$(shell $(CC) --version 2>/dev/null))
 WARNINGS := -Wall -Wextra -Wpedantic -Werror
 ifneq ($(IS_CLANG),)
 # Not enabled by -Wall or -Wextra, and the only clang warning that flags the
-# first version's uninitialised variable.
+# first version's uninitialised variable (see `make ub-demo`).
 WARNINGS += -Wconditional-uninitialized
 endif
 STRICT_CFLAGS := -std=c11 $(WARNINGS) $(CFLAGS)
 
-.PHONY: all build run test test-c test-py lint check clean
+.PHONY: all build run bench ub-demo test test-c test-py lint check clean
 
 all: build
 
@@ -38,6 +38,9 @@ $(LIB): sum.c sum.h
 
 run: build
 	$(PYTHON) main.py
+
+bench: build
+	$(PYTHON) bench.py
 
 test: test-c test-py
 
@@ -62,6 +65,28 @@ ifneq ($(IS_CLANG),)
 endif
 
 check: lint test
+
+# Reproduces the first version's undefined behaviour and shows which tools
+# catch it. Results vary by machine and compiler; that is the point.
+ub-demo:
+ifeq ($(IS_CLANG),)
+	@echo "ub-demo uses clang-only flags; set CC to a clang" >&2; exit 2
+else
+	@mkdir -p $(BUILD_DIR)
+	@echo "Warnings on ub_demo.c (the first version's code):"
+	@for flags in "-Wall -Wextra" "-Wall -Wextra -Wconditional-uninitialized"; do \
+		n=$$($(CC) -std=c11 $$flags -c -o /dev/null ub_demo.c 2>&1 | grep -c 'warning:'); \
+		printf '  %-44s %s\n' "$$flags" "$$n warning(s)"; \
+	done
+	@n=$$($(CC) --analyze -o /dev/null ub_demo.c 2>&1 | grep -c 'warning:'); \
+		printf '  %-44s %s\n' "--analyze (static analyzer)" "$$n warning(s)"
+	@echo "Results (correct answer: 4950):"
+	@for flags in -O0 -O2 "-O2 -fsanitize=undefined" \
+		"-O2 -ftrivial-auto-var-init=pattern" "-O2 -ftrivial-auto-var-init=zero"; do \
+		$(CC) -std=c11 $$flags -o $(BUILD_DIR)/ub_demo ub_demo.c 2>/dev/null && \
+		printf '  %-44s %s\n' "$$flags" "$$($(BUILD_DIR)/ub_demo 2>&1 | tr '\n' ' ')"; \
+	done
+endif
 
 clean:
 	rm -rf $(BUILD_DIR) .mypy_cache .ruff_cache __pycache__ tests/__pycache__

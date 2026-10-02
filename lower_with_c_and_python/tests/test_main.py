@@ -1,4 +1,4 @@
-"""Tests for the demo entry point's CLI contract."""
+"""Tests for the demo entry point and the benchmark script's CLI contract."""
 
 import contextlib
 import io
@@ -9,6 +9,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import bench
 import csum
 import main
 
@@ -96,6 +97,29 @@ class UntilInterruptedTest(unittest.TestCase):
         proc.send_signal(signal.SIGTERM)
         proc.communicate(timeout=5)
         self.assertEqual(proc.returncode, -signal.SIGTERM)
+
+
+class BenchCliTest(unittest.TestCase):
+    def test_tiny_run_exits_zero(self) -> None:
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            code = bench.main(
+                [
+                    "--repeats=1",
+                    "--callback-elements=1000",
+                    "--gil-elements=1000",
+                ]
+            )
+        self.assertEqual(code, 0)
+        self.assertIn("PyDLL (holds GIL)", stdout.getvalue())
+
+    def test_non_positive_values_exit_2(self) -> None:
+        with (
+            contextlib.redirect_stderr(io.StringIO()),
+            self.assertRaises(SystemExit) as ctx,
+        ):
+            bench.main(["--repeats=0"])
+        self.assertEqual(ctx.exception.code, 2)
 
 
 if __name__ == "__main__":
