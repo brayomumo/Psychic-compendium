@@ -170,6 +170,15 @@ after SIGTERM. `python3 demo.py --help` lists every flag. For a run long enough
 to interrupt, try `make run ARGS="--items 100000 --produce-ms 1"` and press
 Ctrl+C.
 
+| Make target | What it does |
+|---|---|
+| `run` | runs `demo.py` with `ARGS`; finishes on its own |
+| `test` | runs the unittest suite |
+| `lint` | `ruff check`, `ruff format --check` and `mypy --strict` |
+| `check` | `lint`, then `test`: the gate |
+| `bench` | runs `bench.py` with `ARGS` |
+| `clean` | removes caches |
+
 | Make variable | Default | Purpose |
 |---|---|---|
 | `PYTHON` | `python3` | interpreter for every target |

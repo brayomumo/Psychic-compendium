@@ -8,7 +8,7 @@ MYPY ?= $(UVX) mypy@2.4.0
 # Extra flags for demo.py (make run) or bench.py (make bench).
 ARGS ?=
 
-.PHONY: run test lint typecheck check bench clean
+.PHONY: run test lint check bench clean
 
 run:
 	$(PYTHON) demo.py $(ARGS)
@@ -16,14 +16,13 @@ run:
 test:
 	$(PYTHON) -m unittest discover -s tests -v
 
+# Formatters, linters and the type checker.
 lint:
 	$(RUFF) check .
 	$(RUFF) format --check .
-
-typecheck:
 	$(MYPY) --strict .
 
-check: lint typecheck test
+check: lint test
 
 bench:
 	$(PYTHON) bench.py $(ARGS)
