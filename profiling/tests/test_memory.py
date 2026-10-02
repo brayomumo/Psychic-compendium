@@ -1,4 +1,6 @@
 import functools
+import subprocess
+import sys
 import tracemalloc
 from pathlib import Path
 
@@ -24,6 +26,30 @@ class LeakTest(WatchdogTestCase):
         self.assertEqual(top.blocks, KEYS)
         self.assertGreaterEqual(top.size_bytes, KEYS * workload.PAYLOAD_BYTES)
         self.assertIn("bytes(PAYLOAD_BYTES)", top.source)
+
+    def test_filter_compilation_noise_bug_reports_only_the_workload(
+        self,
+    ) -> None:
+        # Filtering between the snapshots once reported fnmatch and re
+        # internals as growth: compiling the filter patterns allocates. The
+        # compiled patterns are cached for the life of the process, so only
+        # a fresh interpreter (cold caches) shows the bug.
+        script = (
+            "import functools, memory, workload\n"
+            f"growth = memory.find_growth("
+            f"functools.partial(workload.leak, {KEYS}), limit=20)\n"
+            "print('\\n'.join(sorted({g.filename for g in growth})))\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=PROTOTYPE_DIR,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=True,
+        )
+        files = {Path(line).name for line in result.stdout.splitlines()}
+        self.assertEqual(files, {"workload.py"})
 
     def test_cache_hits_allocate_nothing_new(self) -> None:
         workload.leak(KEYS)

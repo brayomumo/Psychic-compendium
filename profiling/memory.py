@@ -64,12 +64,15 @@ def find_growth(work: Callable[[], object], *, limit: int = 5) -> list[Growth]:
     if started_here:
         tracemalloc.start()
     try:
-        before = tracemalloc.take_snapshot().filter_traces(_NOISE)
+        before = tracemalloc.take_snapshot()
         work()
-        after = tracemalloc.take_snapshot().filter_traces(_NOISE)
+        after = tracemalloc.take_snapshot()
     finally:
         if started_here:
             tracemalloc.stop()
+    # Filter only after both snapshots: compiling the filters' patterns
+    # allocates, and doing it in between would show up as growth.
+    before, after = before.filter_traces(_NOISE), after.filter_traces(_NOISE)
     growth: list[Growth] = []
     for diff in after.compare_to(before, "lineno"):
         if diff.size_diff <= 0:
