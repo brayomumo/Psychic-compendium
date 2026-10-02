@@ -2,7 +2,7 @@
 # in STANDARDS.md (appendix). Third-party actions are pinned to full commit SHAs;
 # the trailing comment names the release the SHA belongs to.
 name: Set up toolchains
-description: Go, Python, uv, the Go linters, and clang with sanitizer runtimes.
+description: Go, Python, uv, and clang with sanitizer runtimes.
 
 inputs:
   python-version:
@@ -12,10 +12,13 @@ inputs:
 runs:
   using: composite
   steps:
+    # Each module also pins `toolchain go1.27.1` and the Makefiles export it, so
+    # this only saves the download. Linters run through `go run` in the
+    # Makefiles at pinned versions, so none are installed here.
     - name: Go
       uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
       with:
-        go-version: "1.23"
+        go-version: "1.27.1"
         cache-dependency-path: "**/go.sum"
 
     - name: Python
@@ -27,12 +30,6 @@ runs:
       uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
       with:
         version: "0.8.14"
-
-    - name: Go linters
-      shell: bash
-      run: |
-        go install honnef.co/go/tools/cmd/staticcheck@2025.1.1
-        go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.5
 
     # Ubuntu's clang can't link -fsanitize=address without libclang-rt-<ver>-dev,
     # and sanitizer reports need llvm-symbolizer (llvm-<ver>) for file:line.

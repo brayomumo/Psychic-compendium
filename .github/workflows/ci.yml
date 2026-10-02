@@ -8,6 +8,9 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # Weekly, so vulnerabilities disclosed after a merge still turn main red.
+  schedule:
+    - cron: "17 6 * * 1"
 
 permissions:
   contents: read
@@ -25,6 +28,8 @@ jobs:
       all: ${{ steps.list.outputs.all }}
       python: ${{ steps.list.outputs.python }}
       integration: ${{ steps.list.outputs.integration }}
+      vulncheck: ${{ steps.list.outputs.vulncheck }}
+      generated: ${{ steps.list.outputs.generated }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -42,9 +47,13 @@ jobs:
             echo "python=$(for d in "${prototypes[@]}"; do
               find "$d" -maxdepth 2 -name pyproject.toml | grep -q . && echo "$d"
             done | to_json)"
-            echo "integration=$(for d in "${prototypes[@]}"; do
-              grep -q '^test-integration:' "$d/Makefile" && echo "$d"
-            done | to_json)"
+            # Optional targets, run wherever a prototype defines them.
+            for target in test-integration vulncheck check-generated; do
+              key=${target#test-}; key=${key#check-}
+              echo "$key=$(for d in "${prototypes[@]}"; do
+                grep -q "^$target:" "$d/Makefile" && echo "$d"
+              done | to_json)"
+            done
           } >> "$GITHUB_OUTPUT"
           cat "$GITHUB_OUTPUT"
 
@@ -131,11 +140,53 @@ jobs:
       - name: make test-integration
         run: make -C "$PROTOTYPE" test-integration
 
+  vulncheck:
+    name: vulncheck (${{ matrix.prototype }})
+    needs: discover
+    if: needs.discover.outputs.vulncheck != '[]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        prototype: ${{ fromJSON(needs.discover.outputs.vulncheck) }}
+    env:
+      PROTOTYPE: ${{ matrix.prototype }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-toolchains
+      # A failure means bump the toolchain or the dependency (STANDARDS.md section 5).
+      - name: make vulncheck
+        run: make -C "$PROTOTYPE" vulncheck
+
+  generated:
+    name: generated code (${{ matrix.prototype }})
+    needs: discover
+    if: needs.discover.outputs.generated != '[]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        prototype: ${{ fromJSON(needs.discover.outputs.generated) }}
+    env:
+      PROTOTYPE: ${{ matrix.prototype }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-toolchains
+      # The target installs its own pinned generators and fails on any drift.
+      - name: make check-generated
+        run: make -C "$PROTOTYPE" check-generated
+
   # One stable check name for branch protection, whatever the matrix contains.
   ci-ok:
     name: ci-ok
     if: always()
-    needs: [discover, check, python-compat, integration]
+    needs: [discover, check, python-compat, integration, vulncheck, generated]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

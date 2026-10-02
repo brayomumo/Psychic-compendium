@@ -368,8 +368,8 @@ Optional targets, used with these names when needed:
 **Recipes** fail fast. Avoid `|| true` unless the failure is genuinely irrelevant, and comment why.
 Never `rm -rf` a variable that could be empty.
 
-**CI** ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs on every pull request and every
-push to `main`, on `ubuntu-24.04`. It discovers prototypes the same way the root `Makefile` does, and
+**CI** ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs on every pull request, every push
+to `main`, and weekly (so newly disclosed vulnerabilities still surface), on `ubuntu-24.04`. It discovers prototypes the same way the root `Makefile` does, and
 runs these jobs:
 
 | Job | What it runs | Where |
@@ -377,6 +377,8 @@ runs these jobs:
 | `check (<prototype>)` | `make check`, then `make run` (must exit 0 on its own), plus `make test-msan` for the C prototype | Every prototype, with `CC=clang` and `REQUIRE_ASAN=1` |
 | `python 3.11 (<prototype>)` | `make test` on the oldest supported Python | Every prototype that contains a `pyproject.toml` |
 | `integration (<prototype>)` | `make test-integration`, which starts its own Docker services | Every prototype whose Makefile has that target |
+| `vulncheck (<prototype>)` | `make vulncheck` (govulncheck) | Every prototype with that target, i.e. every Go prototype |
+| `generated code (<prototype>)` | `make check-generated`, which installs its own pinned generators and fails on drift | Every prototype with generated code |
 | `ci-ok` | Fails if any job above failed or was cancelled | Once; this is the check to require in branch protection |
 
 Toolchains come from one composite action
