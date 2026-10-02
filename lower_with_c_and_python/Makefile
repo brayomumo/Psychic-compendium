@@ -1,4 +1,4 @@
-# C called from Python with ctypes.
+# C called from Python with ctypes. See README.md for what each target shows.
 
 CC ?= cc
 PYTHON ?= python3
