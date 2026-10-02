@@ -53,7 +53,7 @@ name. It never sees the C header, so it knows nothing about signatures:
 | `ub_demo.c` | The first version's buggy function, kept for `make ub-demo` |
 | `tests/test_sum.c` | Native C tests, built with ASan + UBSan |
 | `tests/test_csum.py`, `tests/test_main.py` | Python tests |
-| `usable-sanitizers.sh` | Drops ASan from the native test when it can't run on this toolchain |
+| `usable-sanitizers.sh` | Probes ASan before the native test; drops it with a warning, or fails under `REQUIRE_ASAN=1` |
 
 `sum_range(start, stop)` computes `sum(range(start, stop))`. The first version
 summed `range(n)`. A start offset makes overflow testable in two iterations
@@ -160,6 +160,9 @@ means they took turns holding the GIL.
 
 ## Test
 
+On macOS (Apple clang 17, Python 3.14), where ASan can't run (see
+Trade-offs):
+
 ```console
 $ make check
 uvx ruff check .
@@ -168,7 +171,7 @@ uvx ruff format --check .
 uvx mypy .
 Success: no issues found in 5 source files
 cc --analyze -Xclang -analyzer-werror -std=c11 -o /dev/null sum.c
-warning: AddressSanitizer does not run with cc here; using the rest
+warning: AddressSanitizer does not work with cc here (an empty ASan program hung for 3 s at startup); using the rest. Set REQUIRE_ASAN=1 to make this an error.
 + cc -std=c11 -Wall -Wextra -Wpedantic -Werror -Wconditional-uninitialized -O2 -g ... -fsanitize=undefined -fno-sanitize-recover=all -o build/test_sum tests/test_sum.c sum.c
 + build/test_sum
 test_sum: all tests passed
@@ -176,6 +179,10 @@ python3 -m unittest discover -s tests -v
 ...
 Ran 31 tests in 0.306s
 OK
+$ make check REQUIRE_ASAN=1
+...
+error: REQUIRE_ASAN=1 but AddressSanitizer does not work with cc here: an empty ASan program hung for 3 s at startup
+make: *** [test-c] Error 1
 ```
 
 | Target | What it does |
@@ -196,7 +203,8 @@ OK
 | `PYTHON` | `python3` | Interpreter for the demo and tests |
 | `RUFF` | `uvx ruff` | Linter and formatter |
 | `MYPY` | `uvx mypy` | Type checker (strict, configured in `pyproject.toml`) |
-| `SANITIZERS` | `address,undefined` | For the native test. `address` is dropped, with a warning, if ASan can't run |
+| `SANITIZERS` | `address,undefined` | For the native test in `test-c` |
+| `REQUIRE_ASAN` | `0` | `0`: if ASan can't run, warn and drop it from `SANITIZERS`. `1`: fail `test-c` (and `check`) instead. CI sets `1` so a broken ASan can never pass as a UBSan-only run. Any other value, or `1` with no `address` in `SANITIZERS`, is a usage error |
 
 The native tests (`tests/test_sum.c`) build with `-fno-sanitize-recover=all`.
 I checked that the gate bites: with the overflow guard removed, UBSan aborts
@@ -227,7 +235,7 @@ the run with `signed integer overflow: 9223372036854775805 +
 | Re-entrant call from a callback | | Works. The inner call sees the outer call's flag handler, so it doesn't defer again; on Ctrl+C the inner call finishes and the outer one stops | `test_reentrant_call_from_callback` |
 | C and Python both printing | Two stdio buffers; piped output reorders | The library never prints; progress goes through the callback | (by construction) |
 | Uninitialised variable (first version) | Undefined behaviour; garbage that changes per build and run | `-Wconditional-uninitialized -Werror` and `clang --analyze` in `make check`; both reject `ub_demo.c` | `make ub-demo`, `make lint` |
-| ASan broken on the toolchain | `make check` would hang forever | Probe with a 3 s timeout; fall back to UBSan with a warning | Observed on this machine (see Trade-offs) |
+| ASan broken on the toolchain | `make check` would hang forever | Probe with a 3 s timeout. Default: fall back to the other sanitizers with a warning. `REQUIRE_ASAN=1`: fail with the reason | Observed on this machine (see Trade-offs) |
 
 ## What the first version got wrong
 

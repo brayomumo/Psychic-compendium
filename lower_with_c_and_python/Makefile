@@ -6,6 +6,8 @@ RUFF ?= uvx ruff
 MYPY ?= uvx mypy
 CFLAGS ?= -O2
 SANITIZERS ?= address,undefined
+# 1: fail if ASan cannot run instead of falling back to the other sanitizers.
+REQUIRE_ASAN ?= 0
 
 # Fixed, not configurable: csum.library_path() looks for the library here.
 BUILD_DIR := build
@@ -46,7 +48,8 @@ test: test-c test-py
 
 test-c:
 	@mkdir -p $(BUILD_DIR) && \
-	san=$$(sh usable-sanitizers.sh '$(CC)' '$(SANITIZERS)' '$(BUILD_DIR)') && \
+	san=$$(sh usable-sanitizers.sh '$(CC)' '$(SANITIZERS)' '$(BUILD_DIR)' \
+		'$(REQUIRE_ASAN)') && \
 	set -x && \
 	$(CC) $(STRICT_CFLAGS) -g -fno-omit-frame-pointer \
 		-fsanitize=$$san -fno-sanitize-recover=all \
