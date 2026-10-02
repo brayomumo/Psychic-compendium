@@ -38,11 +38,16 @@ func main() {
 	// that into an EPIPE write error, which ends the session with exit 1 like
 	// any other local I/O failure.
 	signal.Ignore(syscall.SIGPIPE)
-	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
+	ctx, stop := notifyContext(log.New(os.Stderr, "todo: ", 0))
+	code := run(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr)
+	stop() // os.Exit skips deferred calls
+	os.Exit(code)
 }
 
-// run is main without the process-global parts, so tests can call it.
-func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+// run is main without the process-global parts, so tests can call it. ctx is
+// cancelled when the session must stop; a signalError cause selects the
+// 128+n exit status.
+func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	logger := log.New(stderr, "todo: ", 0)
 
 	defaultPath, defaultErr := defaultFile()
@@ -82,8 +87,6 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return exitFailure
 	}
 
-	ctx, stop := notifyContext()
-	defer stop()
 	shown := *path
 	if abs, err := filepath.Abs(shown); err == nil {
 		shown = abs
@@ -101,6 +104,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		logger.Printf("stopped by %v; all confirmed changes are saved", sig.sig)
 		return 128 + int(sig.sig)
 	default:
+		// Includes a cancellation no signal caused: that is a failure, never
+		// a clean shutdown (STANDARDS.md section 10).
 		logger.Print(err)
 		return exitFailure
 	}
@@ -126,9 +131,10 @@ func (e signalError) Error() string { return "received " + e.sig.String() }
 // signal as the cancellation cause. signal.NotifyContext would not say which
 // signal arrived, and the exit status follows the 128+n convention.
 //
-// After the first signal, handling is reset to the default, so a second
-// Ctrl+C terminates immediately if shutdown ever hangs.
-func notifyContext() (context.Context, func()) {
+// The first signal resets handling to the default and then logs a notice, in
+// that order: by the time anyone reads the notice, a second Ctrl+C already
+// terminates the process, even if shutdown hangs.
+func notifyContext(logger *log.Logger) (context.Context, func()) {
 	ctx, cancel := context.WithCancelCause(context.Background())
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
@@ -137,6 +143,7 @@ func notifyContext() (context.Context, func()) {
 		case s := <-signals:
 			signal.Stop(signals)
 			sig, _ := s.(syscall.Signal) // always a syscall.Signal on Unix
+			logger.Printf("received %v, finishing up (send it again to quit at once)", sig)
 			cancel(signalError{sig: sig})
 		case <-ctx.Done():
 		}

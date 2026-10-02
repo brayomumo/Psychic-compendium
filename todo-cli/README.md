@@ -63,15 +63,20 @@ flowchart LR
 ```
 
 **Ownership and shutdown.**
-- `main` owns the process: it parses flags, loads the file, starts the signal
-  watcher and maps the result of `repl.Run` to an exit code.
+- `main` owns the process-wide pieces. It ignores SIGPIPE, installs the
+  signal watcher, and passes the resulting context to `run`. `run` parses
+  flags, loads the file, runs the session and maps the result to an exit code.
+  Because `run` takes the context, tests check the exit-code mapping without
+  sending real signals.
 - `repl.Run` owns the session and the reader goroutine. It returns on `q`, at
   end of input, on cancellation, or when reading input or writing output fails.
 - On a signal, the session notices at its next wait for input. A save already
   in progress always completes first.
-- After the first signal, default signal handling is restored, so a second
-  Ctrl+C terminates at once if shutdown ever hangs. This is by construction
-  and not tested: nothing in shutdown can block.
+- The first signal restores default signal handling and then logs
+  `todo: received interrupt, finishing up (send it again to quit at once)`,
+  in that order. Once that notice is visible, a second Ctrl+C terminates the
+  process even if shutdown hangs. A test proves this against a deliberately
+  hung shutdown.
 - If the reader goroutine is inside a terminal `Read` when the session ends,
   it exits with the process.
 
@@ -240,7 +245,9 @@ The test layers mirror the code:
 | Data file does not exist yet | Empty list; file and directory created on the first save | `ErrNotExist` means empty | `TestLoadMissingFileIsEmptyList`, `TestSaveCreatesPrivateFileAndDirectory` |
 | Data path unreadable (e.g. a directory) | Exit 1 with a read error, not "corrupt" | Read errors and content errors are kept apart | `TestUnreadableFileIsAFailure`, `TestLoadUnreadableFileIsNotReportedAsCorrupt` |
 | Data file is a symlink | Target updated, link kept | `filepath.EvalSymlinks` before the rename | `TestSaveFollowsSymlink` |
-| SIGINT / SIGTERM at a prompt or halfway through adding | Exit 130 / 143; confirmed changes kept; half-entered task dropped; no temp files | Context cancelled with the signal as cause; saves are never interrupted | `TestSignalShutsDownCleanlyAndKeepsData`, `TestCancelWhileWaitingForInput`, `TestCancellationWinsOverWaitingInput` |
+| SIGINT / SIGTERM at a prompt or halfway through adding | Immediate notice on stderr, then exit 130 / 143; confirmed changes kept; half-entered task dropped; no temp files | Context cancelled with the signal as cause; saves are never interrupted | `TestSignalShutsDownCleanlyAndKeepsData`, `TestCancelWhileWaitingForInput`, `TestCancellationWinsOverWaitingInput`, `TestCancellationCauseSelectsExitStatus` |
+| Shutdown hangs after the first signal | A second signal kills the process at once (shell status 130) | Default handling is restored before the first notice is logged | `TestSecondSignalKillsAHungShutdown` |
+| Cancellation that no signal caused | Exit 1, not 130 / 143 | Only a `signalError` cause maps to 128+n | `TestCancellationCauseSelectsExitStatus` |
 | Output reader goes away (`todo \| head -1`) | Exit 1 with `write output: … broken pipe` on stderr; saved data intact | `main` ignores SIGPIPE, so the write fails with EPIPE instead of the runtime killing the process | `TestClosedStdoutExitsOneAndKeepsData` |
 | Output writer fails (not stdout) | Session ends with the write error, exit 1 | First write error is recorded and checked after every command | `TestWriteFailureEndsSession` |
 | Input read error | Exit 1, `read input: …` | Scanner error surfaced | `TestReadFailureIsAnError` |

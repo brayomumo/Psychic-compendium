@@ -30,10 +30,16 @@ type child struct {
 
 func startChild(t *testing.T, path string) *child {
 	t.Helper()
-	cmd := exec.Command(os.Args[0], "-file", path)
+	return startMode(t, "1", "-file", path)
+}
+
+// startMode starts the test binary in one of the runMainEnv modes.
+func startMode(t *testing.T, mode string, args ...string) *child {
+	t.Helper()
+	cmd := exec.Command(os.Args[0], args...)
 	// Under -race, a child exiting with status 0 sleeps atexit_sleep_ms
 	// (1s by default) before exiting; that measures nothing here.
-	cmd.Env = append(os.Environ(), runMainEnv+"=1",
+	cmd.Env = append(os.Environ(), runMainEnv+"="+mode,
 		"GORACE="+strings.TrimSpace(os.Getenv("GORACE")+" atexit_sleep_ms=0"))
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -139,8 +145,13 @@ func TestSignalShutsDownCleanlyAndKeepsData(t *testing.T) {
 			if code := c.waitExit(t); code != tc.wantCode {
 				t.Errorf("exit code = %d, want %d; stderr:\n%s", code, tc.wantCode, c.stderr)
 			}
-			if !strings.Contains(c.stderr.String(), "all confirmed changes are saved") {
-				t.Errorf("stderr = %q, want a clean shutdown message", c.stderr)
+			for _, want := range []string{
+				"received " + tc.sig.String() + ", finishing up", // the immediate notice
+				"all confirmed changes are saved",                // the outcome
+			} {
+				if !strings.Contains(c.stderr.String(), want) {
+					t.Errorf("stderr = %q, want it to contain %q", c.stderr, want)
+				}
 			}
 
 			// The confirmed task survived, the interrupted one was never
@@ -198,5 +209,26 @@ func TestClosedStdoutExitsOneAndKeepsData(t *testing.T) {
 	l, err := store.NewFile(path).Load()
 	if err != nil || len(l.All()) != 1 {
 		t.Errorf("data after closed stdout: %v (err %v), want the saved task", l, err)
+	}
+}
+
+// The first signal starts a graceful shutdown; if that shutdown hangs, a
+// second signal must still end the process at once.
+func TestSecondSignalKillsAHungShutdown(t *testing.T) {
+	c := startMode(t, "hung-shutdown")
+	c.expect(t, "ready") // printed after the handlers are installed
+	if err := c.cmd.Process.Signal(syscall.SIGINT); err != nil {
+		t.Fatal(err)
+	}
+	// Two signals sent back to back can merge into one; wait for the notice,
+	// which is logged after default handling has been restored.
+	c.expect(t, "received interrupt, finishing up")
+	if err := c.cmd.Process.Signal(syscall.SIGINT); err != nil {
+		t.Fatal(err)
+	}
+	c.waitExit(t)
+	ws, ok := c.cmd.ProcessState.Sys().(syscall.WaitStatus)
+	if !ok || !ws.Signaled() || ws.Signal() != syscall.SIGINT {
+		t.Errorf("child ended with %v, want death by SIGINT (shell status 130)", c.cmd.ProcessState)
 	}
 }

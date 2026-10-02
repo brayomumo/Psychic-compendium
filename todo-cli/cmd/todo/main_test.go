@@ -2,22 +2,42 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
-// runMainEnv makes the test binary behave as the todo command, so tests can
-// run the real program in a child process (see signal_test.go).
+// runMainEnv makes the test binary run as a child process for
+// signal_test.go: "1" runs the real todo command, "hung-shutdown" runs the
+// real signal handling in front of a shutdown that never finishes.
 const runMainEnv = "TODO_TEST_RUN_MAIN"
 
 func TestMain(m *testing.M) {
-	if os.Getenv(runMainEnv) == "1" {
-		main()
-		return // unreachable: main exits
+	switch os.Getenv(runMainEnv) {
+	case "1":
+		main() // exits
+	case "hung-shutdown":
+		hungShutdown()
 	}
 	os.Exit(m.Run())
+}
+
+// hungShutdown installs the production signal handling, announces readiness,
+// and after the first signal never finishes shutting down. Only a second
+// signal can end it. The notice goes to stdout so the test can wait for it.
+func hungShutdown() {
+	ctx, stop := notifyContext(log.New(os.Stdout, "todo: ", 0))
+	defer stop()
+	fmt.Println("ready")
+	<-ctx.Done()
+	time.Sleep(time.Hour)
 }
 
 type cli struct {
@@ -28,8 +48,40 @@ type cli struct {
 func runCLI(t *testing.T, stdin string, args ...string) cli {
 	t.Helper()
 	var out, errOut bytes.Buffer
-	code := run(args, strings.NewReader(stdin), &out, &errOut)
+	code := run(context.Background(), args, strings.NewReader(stdin), &out, &errOut)
 	return cli{code: code, out: out.String(), errOut: errOut.String()}
+}
+
+func TestCancellationCauseSelectsExitStatus(t *testing.T) {
+	tests := []struct {
+		name     string
+		cause    error
+		wantCode int
+		wantErr  string
+	}{
+		{"SIGINT", signalError{sig: syscall.SIGINT}, 130, "stopped by interrupt; all confirmed changes are saved"},
+		{"SIGTERM", signalError{sig: syscall.SIGTERM}, 143, "stopped by terminated; all confirmed changes are saved"},
+		// A cancellation no signal caused is a failure, not a clean shutdown.
+		{"internal cancel", errors.New("internal"), exitFailure, "todo: internal"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancelCause(context.Background())
+			cancel(tc.cause)
+			var out, errOut bytes.Buffer
+			path := filepath.Join(t.TempDir(), "tasks.json")
+			code := run(ctx, []string{"-file", path}, strings.NewReader("e\nmilk\n\n"), &out, &errOut)
+			if code != tc.wantCode {
+				t.Errorf("exit code = %d, want %d", code, tc.wantCode)
+			}
+			if !strings.Contains(errOut.String(), tc.wantErr) {
+				t.Errorf("stderr = %q, want it to contain %q", errOut.String(), tc.wantErr)
+			}
+			if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("a cancelled session ran a command (data file stat: %v)", err)
+			}
+		})
+	}
 }
 
 func TestUsage(t *testing.T) {
