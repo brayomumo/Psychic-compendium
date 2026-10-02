@@ -1,10 +1,13 @@
-# libsum: a small C library meant to be called from Python with ctypes.
+# C called from Python with ctypes.
 
 CC ?= cc
+PYTHON ?= python3
+RUFF ?= uvx ruff
+MYPY ?= uvx mypy
 CFLAGS ?= -O2
 SANITIZERS ?= address,undefined
 
-# Fixed, not configurable: the Python side loads the library from here.
+# Fixed, not configurable: csum.library_path() looks for the library here.
 BUILD_DIR := build
 
 ifeq ($(shell uname -s),Darwin)
@@ -23,7 +26,7 @@ WARNINGS += -Wconditional-uninitialized
 endif
 STRICT_CFLAGS := -std=c11 $(WARNINGS) $(CFLAGS)
 
-.PHONY: all build test test-c lint check clean
+.PHONY: all build run test test-c test-py lint check clean
 
 all: build
 
@@ -33,7 +36,10 @@ $(LIB): sum.c sum.h
 	@mkdir -p $(@D)
 	$(CC) $(STRICT_CFLAGS) -fPIC -shared -o $@ sum.c
 
-test: test-c
+run: build
+	$(PYTHON) main.py
+
+test: test-c test-py
 
 test-c:
 	@mkdir -p $(BUILD_DIR) && \
@@ -44,7 +50,13 @@ test-c:
 		-o $(BUILD_DIR)/test_sum tests/test_sum.c sum.c && \
 	$(BUILD_DIR)/test_sum
 
+test-py: build
+	$(PYTHON) -m unittest discover -s tests -v
+
 lint:
+	$(RUFF) check .
+	$(RUFF) format --check .
+	$(MYPY) .
 ifneq ($(IS_CLANG),)
 	$(CC) --analyze -Xclang -analyzer-werror -std=c11 -o /dev/null sum.c
 endif
@@ -52,4 +64,4 @@ endif
 check: lint test
 
 clean:
-	rm -rf $(BUILD_DIR)
+	rm -rf $(BUILD_DIR) .mypy_cache .ruff_cache __pycache__ tests/__pycache__
