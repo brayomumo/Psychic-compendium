@@ -12,6 +12,7 @@ run:
 	$(PYTHON) pipeline.py
 	$(PYTHON) dispatcher.py
 	$(PYTHON) pubsub.py
+	$(PYTHON) threaded.py
 
 test:
 	$(PYTHON) -m unittest discover -s tests -v
