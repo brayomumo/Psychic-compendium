@@ -134,8 +134,12 @@ func Run(ctx context.Context, cfg Config) (Stats, error) {
 		stats.Consumed += n
 	}
 	if stats.Consumed < cfg.Jobs {
-		// Jobs are only ever left unconsumed because ctx was cancelled.
-		return stats, ctx.Err()
+		if err := ctx.Err(); err != nil {
+			return stats, err
+		}
+		// Cancellation is the only designed way to leave jobs unconsumed, so reaching this
+		// point means a bug dropped work. Fail loudly rather than report a partial run as success.
+		return stats, fmt.Errorf("pipeline: consumed %d of %d jobs without cancellation", stats.Consumed, cfg.Jobs)
 	}
 	return stats, nil
 }
