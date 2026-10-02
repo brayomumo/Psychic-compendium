@@ -265,7 +265,11 @@ def threaded(
     """
     _check_arguments(target, maxsize)
     relay = _Relay(target, maxsize, name or f"threaded-{next(_thread_ids)}")
-    relay.thread.start()
+    try:
+        relay.thread.start()  # e.g. "can't start new thread" at a limit
+    except BaseException:
+        target.close()
+        raise
     clean = False
     try:
         while True:

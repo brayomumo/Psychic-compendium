@@ -434,6 +434,18 @@ class MisuseTest(ThreadedTestCase):
                 inspect.getgeneratorstate(target), inspect.GEN_CLOSED, label
             )
 
+    def test_thread_start_failure_closes_target(self) -> None:
+        target = recorder([])
+        cant_start = RuntimeError("can't start new thread")
+        with (
+            mock.patch.object(
+                threading.Thread, "start", side_effect=cant_start
+            ),
+            self.assertRaisesRegex(RuntimeError, "can't start new thread"),
+        ):
+            threaded.threaded(target)
+        self.assertEqual(inspect.getgeneratorstate(target), inspect.GEN_CLOSED)
+
     def test_target_using_its_own_bridge_is_stopped_with_an_error(
         self,
     ) -> None:

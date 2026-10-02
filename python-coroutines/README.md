@@ -270,7 +270,7 @@ test_sentinel_as_class_bug_generator_exit_is_just_data ... ok
 test_never_joined_thread_bug_unclosed_bridge_does_not_hang_exit ... ok
 test_silent_target_death_bug_error_reaches_sender_on_send ... ok
 ...
-Ran 117 tests in 0.56s
+Ran 118 tests in 0.60s
 
 OK
 ```
@@ -332,6 +332,7 @@ timed out from inside the code under test.
 | Exception or Ctrl+C in the producer while the bridge has a backlog | | abort: the backlog is discarded and the thread joined after its current item; the exception continues | `test_exception_in_with_block_discards_backlog`, `test_ctrl_c_during_a_run_aborts_and_joins` |
 | The target sends to or closes its own bridge | the worker would wait on itself forever | `RuntimeError` in the target, an error log, and the worker stops | `test_target_using_its_own_bridge_is_stopped_with_an_error` |
 | Bad `maxsize`, or an unprimed or finished target | | `ValueError`; the target is closed | `test_invalid_arguments_are_rejected_and_target_closed` |
+| The worker thread cannot start (thread limit) | the target would be orphaned | the error propagates and the target is closed | `test_thread_start_failure_closes_target` |
 | A deadlock inside a threaded test | would hang the test run | per-test `faulthandler` watchdog fails the run with every thread's traceback | every test in `test_threaded.py` |
 
 ## What the first version got wrong
