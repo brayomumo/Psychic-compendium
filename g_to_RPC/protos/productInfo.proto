@@ -1,0 +1,23 @@
+// proto file for the productInfo service
+syntax = "proto3";
+option go_package = "productinfo/service";
+package ecommerce;
+
+service ProductInfo {
+    // A simple RPC.
+    // handles logic for the productInfo rpc
+    rpc addProduct(Product) returns (ProductID);
+    rpc getProduct(ProductID) returns (Product);
+}
+
+// message to encompass metadata for a product
+message Product {
+    string id = 1;
+    string name = 2;
+    string description = 3;
+}
+
+// custom user defined message for messageIds
+message ProductID {
+    string value = 1;
+}
