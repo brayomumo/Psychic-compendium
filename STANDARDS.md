@@ -216,8 +216,14 @@ A prototype change is done when every box is ticked:
 ## 5. Go
 
 - **Versions and module.**
-  - `go 1.22` in `go.mod`, or the minimum a dependency requires if that's higher; the README says
-    which and why.
+  - Only supported Go releases (the two newest minor versions; check <https://go.dev/dl/>). `go.mod`
+    says `go 1.26`, the oldest supported release, or the minimum a dependency requires if that's
+    higher, with a comment naming the dependency.
+  - `go.mod` also pins the build toolchain: `toolchain go1.27.1`, the newest patch. Go downloads
+    pinned toolchains on first use (`GOTOOLCHAIN=auto`), so nothing is installed globally. Makefiles
+    export `GOTOOLCHAIN` from that line, so linters are built with the same toolchain they analyse.
+  - Dependencies are kept at their latest releases, and `make vulncheck` (govulncheck) must report no
+    vulnerabilities. When it doesn't, bump the toolchain or the dependency; don't argue with it.
   - Module path: `github.com/brayomumo/Psychic-compendium/<dir>`.
   - Standard library only, unless the concept is the dependency.
 - **Style.** Follow the [Google Go Style Guide](https://google.github.io/styleguide/go/) and [Effective
@@ -256,9 +262,19 @@ A prototype change is done when every box is ticked:
 - **Diagnostics.** Use `log.New(stderr, "<prog>: ", 0)` for CLIs, or `log/slog` for services. Per-event
   logging is opt-in behind `-v`. Interactive rejections go to stderr prefixed `error: `, and echoed
   user input uses `%q`.
-- **Tool config.** Copy [`templates/.golangci.yml`](templates/.golangci.yml) verbatim. Write
-  suppressions as `//nolint:<linter> // <reason>` on their own line above the declaration. The gate:
-  gofmt (no files listed), `go vet`, staticcheck, golangci-lint, and `go test -race -count=1 ./...`.
+- **Tool config.** Copy [`templates/.golangci.yml`](templates/.golangci.yml) (golangci-lint v2 format)
+  verbatim. It deliberately leaves out the `comments` exclusion preset, so revive really does require
+  doc comments on exported identifiers. golangci-lint v1 suppressed that check by default. Write
+  suppressions as `//nolint:<linter> // <reason>` on their own line above the declaration.
+- **The gate:**
+  - the pinned toolchain's gofmt (`go run cmd/gofmt -l .` must list nothing; a bare `gofmt` on PATH
+    may be older);
+  - `go vet`, staticcheck, golangci-lint;
+  - `go test -race -count=1 ./...`.
+
+  Linters run pinned through `go run <pkg>@<version>`, as [`templates/Makefile.go`](templates/Makefile.go)
+  shows, so no machine needs them installed. `make vulncheck` runs separately, because it needs network
+  access to the vulnerability database.
 
 ## 6. C and FFI
 
@@ -330,6 +346,7 @@ Optional targets, used with these names when needed:
 | `make build` | The prototype compiles something. |
 | `make demo` | An interactive program needs a scripted session. |
 | `make bench` | The README makes a performance claim. |
+| `make vulncheck` | Every Go prototype (govulncheck; needs network, so not part of `check`). |
 | `make test-integration` | Some tests need an external service. |
 | `make broker-up` / `make broker-down` | The prototype uses a service container (see [section 11](#11-external-services-and-containers)). |
 | `make sync` | The prototype has uv dependencies. |
@@ -610,7 +627,8 @@ only some prototypes follow is not a rule.
 | uv | 0.x, current | dependency management, runs ruff and mypy |
 | ruff | 0.16.10 | `uvx ruff@0.16.10` |
 | mypy | 2.4.0 | `uvx mypy@2.4.0` |
-| Go | `go 1.22` in go.mod, toolchain 1.23 | `go` |
-| staticcheck | 2025.1.1 | binary on PATH (CI installs this exact version) |
-| golangci-lint | 1.64.5 (v1 config format) | binary on PATH (CI installs this exact version) |
+| Go | `go 1.26` in go.mod, `toolchain go1.27.1` | any `go` ≥ 1.21 on PATH; it downloads the pinned toolchain |
+| staticcheck | 2026.2.1 | `go run honnef.co/go/tools/cmd/staticcheck@2026.2.1` |
+| golangci-lint | v2.14.0 (v2 config format) | `go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0` |
+| govulncheck | v1.8.0 | `go run golang.org/x/vuln/cmd/govulncheck@v1.8.0` (`make vulncheck`) |
 | C compiler | clang (Apple clang 17 locally, distro clang in CI) | `CC ?= cc` |
