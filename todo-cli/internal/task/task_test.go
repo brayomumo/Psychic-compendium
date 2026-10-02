@@ -90,6 +90,17 @@ func TestAddRejectsInvalidText(t *testing.T) {
 	}
 }
 
+// ValidateName is what the REPL calls before asking for a description, so it
+// must agree with Add, which trims first.
+func TestValidateNameAgreesWithAdd(t *testing.T) {
+	for _, name := range []string{"\tfoo\n", "  bar  ", "\t", "a\tb"} {
+		_, addErr := New().Add(name, "", t0)
+		if valErr := ValidateName(name); (valErr == nil) != (addErr == nil) {
+			t.Errorf("ValidateName(%q) = %v but Add() = %v", name, valErr, addErr)
+		}
+	}
+}
+
 func TestAddAcceptsTextAtTheLimit(t *testing.T) {
 	// Limits count characters, not bytes: 200 multi-byte runes is fine.
 	name := strings.Repeat("é", MaxNameLen)
@@ -224,8 +235,9 @@ func TestRestore(t *testing.T) {
 		{"negative ID", 3, []Task{valid(-4)}, nil},
 		{"ID equal to next ID", 3, []Task{valid(3)}, nil},
 		{"duplicate ID", 3, []Task{valid(1), valid(1)}, nil},
-		{"empty name", 3, []Task{{ID: 1, Name: " "}}, nil},
-		{"control char in description", 3, []Task{{ID: 1, Name: "n", Description: "\x07"}}, nil},
+		{"missing creation time", 3, []Task{{ID: 1, Name: "n"}}, nil},
+		{"empty name", 3, []Task{{ID: 1, Name: " ", CreatedAt: t0}}, nil},
+		{"control char in description", 3, []Task{{ID: 1, Name: "n", Description: "\x07", CreatedAt: t0}}, nil},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -250,7 +262,7 @@ func TestRestore(t *testing.T) {
 }
 
 func TestRestoreDoesNotAliasInput(t *testing.T) {
-	in := []Task{{ID: 2, Name: "b"}, {ID: 1, Name: "a"}}
+	in := []Task{{ID: 2, Name: "b", CreatedAt: t0}, {ID: 1, Name: "a", CreatedAt: t0}}
 	l, err := Restore(3, in)
 	if err != nil {
 		t.Fatal(err)

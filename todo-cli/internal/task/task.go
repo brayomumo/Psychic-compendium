@@ -64,7 +64,8 @@ func New() *List { return &List{nextID: 1} }
 
 // Restore rebuilds a list from persisted state, enforcing the same invariants
 // New and the mutating methods maintain: IDs are positive, unique and below
-// nextID, and every task has valid text. Order of the input does not matter.
+// nextID, and every task has a creation time and valid text. Order of the
+// input does not matter.
 func Restore(nextID int, tasks []Task) (*List, error) {
 	if nextID < 1 {
 		return nil, fmt.Errorf("next ID must be at least 1, got %d", nextID)
@@ -79,6 +80,8 @@ func Restore(nextID int, tasks []Task) (*List, error) {
 			return nil, fmt.Errorf("task ID %d is not below next ID %d", t.ID, nextID)
 		case i > 0 && sorted[i-1].ID == t.ID:
 			return nil, fmt.Errorf("duplicate task ID %d", t.ID)
+		case t.CreatedAt.IsZero():
+			return nil, fmt.Errorf("task %d has no creation time", t.ID)
 		}
 		if err := ValidateName(t.Name); err != nil {
 			return nil, fmt.Errorf("task %d: %w", t.ID, err)
@@ -190,12 +193,14 @@ func ValidateDescription(description string) error {
 
 // validateText rejects text that is too long, is not UTF-8, or contains
 // control characters. Control characters would break column alignment and
-// could smuggle terminal escape sequences into list output.
+// could smuggle terminal escape sequences into list output. It judges the
+// trimmed text, because that is what Add stores.
 func validateText(field, s string, maxLen int) error {
+	s = strings.TrimSpace(s)
 	if !utf8.ValidString(s) {
 		return fmt.Errorf("%w: %s is not valid UTF-8", ErrInvalidText, field)
 	}
-	if n := utf8.RuneCountInString(strings.TrimSpace(s)); n > maxLen {
+	if n := utf8.RuneCountInString(s); n > maxLen {
 		return fmt.Errorf("%w: %s is %d characters, the limit is %d", ErrInvalidText, field, n, maxLen)
 	}
 	if strings.IndexFunc(s, unicode.IsControl) >= 0 {
