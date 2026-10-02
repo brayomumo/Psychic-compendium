@@ -51,6 +51,24 @@ type Config struct {
 	Location *time.Location
 }
 
+// Validate reports every missing required field at once.
+func (c Config) Validate() error {
+	var errs []error
+	if c.In == nil {
+		errs = append(errs, errors.New("missing In"))
+	}
+	if c.Out == nil {
+		errs = append(errs, errors.New("missing Out"))
+	}
+	if c.Err == nil {
+		errs = append(errs, errors.New("missing Err"))
+	}
+	if c.Store == nil {
+		errs = append(errs, errors.New("missing Store"))
+	}
+	return errors.Join(errs...)
+}
+
 // errQuit is how the q command unwinds the loop; it never leaves Run.
 var errQuit = errors.New("quit")
 
@@ -64,8 +82,15 @@ var errQuit = errors.New("quit")
 // Run returns nil after q or end of input, context.Cause(ctx) after
 // cancellation, and an error if reading input or writing output fails.
 // Cancellation is noticed while waiting for input; a change that is being
-// saved always completes first.
+// saved always completes first. An invalid cfg or a nil list is reported
+// before anything is read or written.
 func Run(ctx context.Context, cfg Config, list *task.List) error {
+	if err := cfg.Validate(); err != nil {
+		return fmt.Errorf("invalid config: %w", err)
+	}
+	if list == nil {
+		return errors.New("nil task list")
+	}
 	done := make(chan struct{})
 	defer close(done)
 	s := &session{

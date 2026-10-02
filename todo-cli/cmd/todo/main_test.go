@@ -106,6 +106,9 @@ func TestUsage(t *testing.T) {
 			if !strings.Contains(r.errOut, tc.wantErr) {
 				t.Errorf("stderr = %q, want it to contain %q", r.errOut, tc.wantErr)
 			}
+			if !strings.Contains(r.errOut, "Usage: todo [-file path]") {
+				t.Errorf("stderr = %q, want the usage text", r.errOut)
+			}
 			if r.out != "" {
 				t.Errorf("stdout = %q, want nothing on a usage error", r.out)
 			}
@@ -185,7 +188,7 @@ func TestNoDefaultLocationRequiresFileFlag(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("AppData", "")
 	r := runCLI(t, "")
-	if r.code != exitUsage || !strings.Contains(r.errOut, "pass -file") {
+	if r.code != exitUsage || !strings.Contains(r.errOut, "pass -file") || !strings.Contains(r.errOut, "Usage: todo") {
 		t.Errorf("exit code = %d, stderr = %q; want %d asking for -file", r.code, r.errOut, exitUsage)
 	}
 }

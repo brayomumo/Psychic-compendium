@@ -65,7 +65,8 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return exitUsage // flag already printed the problem and usage
 	}
 	if flags.NArg() > 0 {
-		logger.Printf("unexpected argument %q; run todo -h for usage", flags.Arg(0))
+		logger.Printf("unexpected argument %q", flags.Arg(0))
+		flags.Usage()
 		return exitUsage
 	}
 	if *path == "" {
@@ -74,6 +75,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		} else {
 			logger.Print("-file must not be empty")
 		}
+		flags.Usage()
 		return exitUsage
 	}
 

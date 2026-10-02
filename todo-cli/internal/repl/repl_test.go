@@ -405,3 +405,31 @@ func TestReadFailureIsAnError(t *testing.T) {
 		t.Errorf("Run() error = %v, want the read error", err)
 	}
 }
+
+func TestConfigValidateReportsEveryMissingField(t *testing.T) {
+	err := Config{}.Validate()
+	for _, field := range []string{"In", "Out", "Err", "Store"} {
+		if err == nil || !strings.Contains(err.Error(), "missing "+field) {
+			t.Errorf("Validate() = %v, want it to report %s", err, field)
+		}
+	}
+	ok := Config{In: strings.NewReader(""), Out: io.Discard, Err: io.Discard, Store: &fakeStore{}}
+	if err := ok.Validate(); err != nil {
+		t.Errorf("Validate() on a complete config = %v, want nil", err)
+	}
+}
+
+func TestRunRejectsInvalidInputsBeforeDoingAnything(t *testing.T) {
+	if err := Run(context.Background(), Config{Out: io.Discard}, task.New()); err == nil ||
+		!strings.HasPrefix(err.Error(), "invalid config: ") {
+		t.Errorf("Run(incomplete config) = %v, want an invalid config error", err)
+	}
+	var out bytes.Buffer
+	cfg := Config{In: strings.NewReader("q\n"), Out: &out, Err: io.Discard, Store: &fakeStore{}}
+	if err := Run(context.Background(), cfg, nil); err == nil {
+		t.Error("Run(nil list) = nil, want an error")
+	}
+	if out.Len() != 0 {
+		t.Errorf("Run wrote %q before rejecting its inputs", out.String())
+	}
+}
