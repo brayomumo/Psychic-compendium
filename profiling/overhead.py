@@ -175,8 +175,13 @@ def environment() -> str:
     )
 
 
+def _cell(timing: Timing) -> str:
+    low, high = timing.minimum * 1e3, timing.maximum * 1e3
+    return f"{timing.median * 1e3:.1f} ms ({low:.1f}-{high:.1f})"
+
+
 def format_table(rows: Sequence[OverheadRow]) -> str:
-    """Formats rows as a Markdown table of medians and slowdowns.
+    """Formats rows as a Markdown table: median (min-max), then slowdown.
 
     Args:
         rows: Rows from :func:`measure_overhead`.
@@ -185,15 +190,13 @@ def format_table(rows: Sequence[OverheadRow]) -> str:
         The table, with a header.
     """
     lines = [
-        "| workload | plain | cProfile | sampler |",
-        "|---|---:|---:|---:|",
+        "| workload | plain | cProfile | slowdown | sampler | slowdown |",
+        "|---|---:|---:|---:|---:|---:|",
     ]
     for row in rows:
         lines.append(
-            f"| {row.workload} | {row.plain.median * 1e3:.1f} ms "
-            f"| {row.cprofile.median * 1e3:.1f} ms "
-            f"(x{row.cprofile_factor:.2f}) "
-            f"| {row.sampler.median * 1e3:.1f} ms "
-            f"(x{row.sampler_factor:.2f}) |"
+            f"| {row.workload} | {_cell(row.plain)} | {_cell(row.cprofile)} "
+            f"| x{row.cprofile_factor:.2f} | {_cell(row.sampler)} "
+            f"| x{row.sampler_factor:.2f} |"
         )
     return "\n".join(lines)
