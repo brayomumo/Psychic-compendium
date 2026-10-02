@@ -368,6 +368,25 @@ Optional targets, used with these names when needed:
 **Recipes** fail fast. Avoid `|| true` unless the failure is genuinely irrelevant, and comment why.
 Never `rm -rf` a variable that could be empty.
 
+**CI** ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs on every pull request and every
+push to `main`, on `ubuntu-24.04`. It discovers prototypes the same way the root `Makefile` does, and
+runs these jobs:
+
+| Job | What it runs | Where |
+|---|---|---|
+| `check (<prototype>)` | `make check`, then `make run` (must exit 0 on its own), plus `make test-msan` for the C prototype | Every prototype, with `CC=clang` and `REQUIRE_ASAN=1` |
+| `python 3.11 (<prototype>)` | `make test` on the oldest supported Python | Every prototype that contains a `pyproject.toml` |
+| `integration (<prototype>)` | `make test-integration`, which starts its own Docker services | Every prototype whose Makefile has that target |
+| `ci-ok` | Fails if any job above failed or was cancelled | Once; this is the check to require in branch protection |
+
+Toolchains come from one composite action
+([`.github/actions/setup-toolchains`](.github/actions/setup-toolchains/action.yml)), pinned to the
+versions in the [appendix](#appendix-tool-versions). Change both together. Third-party actions are
+pinned to full commit SHAs, with the release in a trailing comment. The token is read-only, and
+`run:` steps read matrix values through `env:`, never through inline `${{ }}`, so that a directory name
+can't inject shell. Lint workflow changes with `docker run --rm -v "$PWD":/repo -w /repo
+rhysd/actionlint:1.7.12`, which bundles shellcheck.
+
 The root `Makefile` runs every prototype's `make check`. Use `make -k check` to see every failure at
 once, `make -j check` to run them in parallel, and `make list` to show what it found.
 
@@ -651,4 +670,6 @@ only some prototypes follow is not a rule.
 | staticcheck | 2026.2.1 | `go run honnef.co/go/tools/cmd/staticcheck@2026.2.1` |
 | golangci-lint | v2.14.0 (v2 config format) | `go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0` |
 | govulncheck | v1.8.0 | `go run golang.org/x/vuln/cmd/govulncheck@v1.8.0` (`make vulncheck`) |
-| C compiler | clang (Apple clang 17 locally, distro clang in CI) | `CC ?= cc` |
+| C compiler | clang (Apple clang 17 locally, clang 18 + libclang-rt-18-dev + llvm-18 in CI) | `CC ?= cc`; CI sets `CC=clang` |
+| actionlint | 1.7.12 | `docker run rhysd/actionlint:1.7.12` (bundles shellcheck) |
+| GitHub Actions | checkout v7.0.1, setup-go v7.0.0, setup-python v7.0.0, setup-uv v10.2.0 | pinned by SHA in the composite action |

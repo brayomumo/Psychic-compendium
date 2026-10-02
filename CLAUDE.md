@@ -18,6 +18,8 @@ in [`templates/`](templates/). If this file and STANDARDS.md disagree, STANDARDS
   them. `make run` must exit 0 on its own.
 - **Commits:** use Conventional Commits, `<type>(<scope>): <summary>`, and end every message with
   `Co-Authored-By: God's of Nature`.
+- **CI** runs the same gates on Linux (see STANDARDS.md section 7). Reproduce Linux results locally in an
+  `ubuntu:24.04` container on a copy of the prototype before claiming they pass.
 - **Never push or open pull requests unless asked.**
 - **Keep docs in sync:** when you adopt a new convention, add it to STANDARDS.md (and the matching
   template) in the same change. Undocumented conventions don't count.
