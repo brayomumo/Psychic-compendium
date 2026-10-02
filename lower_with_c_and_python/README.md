@@ -51,7 +51,7 @@ name. It never sees the C header, so it knows nothing about signatures:
 | `main.py` | Walkthrough demo, plus `--until-interrupted` for a long C call |
 | `bench.py` | Measures the callback round trip and proves the GIL is released |
 | `ub_demo.c` | The first version's buggy function, kept for `make ub-demo` |
-| `tests/test_sum.c` | Native C tests, built with ASan + UBSan |
+| `tests/test_sum.c` | Native C tests, built with ASan + UBSan (`make test-c`) and, on Linux, MSan (`make test-msan`) |
 | `tests/test_csum.py`, `tests/test_main.py` | Python tests |
 | `usable-sanitizers.sh` | Probes ASan before the native test; drops it with a warning, or fails under `REQUIRE_ASAN=1` |
 
@@ -185,15 +185,37 @@ error: REQUIRE_ASAN=1 but AddressSanitizer does not work with cc here: an empty 
 make: *** [test-c] Error 1
 ```
 
+On Linux (Ubuntu 24.04, clang 18.1.3, Python 3.12.3), ASan runs and MSan is
+available. This is the CI configuration:
+
+```console
+$ make check CC=clang REQUIRE_ASAN=1
+...
+clang --analyze -Xclang -analyzer-werror -std=c11 -o /dev/null sum.c
++ clang -std=c11 -Wall -Wextra -Wpedantic -Werror -Wconditional-uninitialized -O2 -g -fno-omit-frame-pointer -fsanitize=address,undefined -fno-sanitize-recover=all -o build/test_sum tests/test_sum.c sum.c
++ build/test_sum
+test_sum: all tests passed
+clang ... -fPIC -shared -o build/libsum.so sum.c
+python3 -m unittest discover -s tests -v
+...
+Ran 31 tests in 0.082s
+OK
+$ make test-msan CC=clang
+clang -std=c11 -Wall -Wextra -Wpedantic -Werror -Wconditional-uninitialized -O1 -fsanitize=memory -fsanitize-memory-track-origins=2 -fno-omit-frame-pointer -g -o build/test_sum_msan tests/test_sum.c sum.c
+build/test_sum_msan
+test_sum: all tests passed
+```
+
 | Target | What it does |
 |---|---|
 | `make build` (default) | Builds `build/libsum.dylib` (macOS) or `build/libsum.so` (Linux) with strict warnings |
 | `make run` | Runs the walkthrough |
-| `make test` | `test-c` (native C tests under sanitizers) then `test-py` (unittest) |
+| `make test` | `test-c` (native C tests under `SANITIZERS`) then `test-py` (unittest) |
+| `make test-msan` | Native C tests under MemorySanitizer. clang on Linux only; elsewhere it exits 2. Not part of `test` |
 | `make lint` | ruff check, ruff format check, mypy, clang static analyzer (when `CC` is clang) |
 | `make check` | `lint` then `test`. This is the gate |
 | `make bench` | The measurements above |
-| `make ub-demo` | Reproduces the first version's undefined behaviour (clang only) |
+| `make ub-demo` | Reproduces the first version's undefined behaviour (clang only; adds an MSan row on Linux) |
 | `make clean` | Removes `build/` and tool caches |
 
 | Variable | Default | Purpose |
@@ -207,9 +229,41 @@ make: *** [test-c] Error 1
 | `REQUIRE_ASAN` | `0` | `0`: if ASan can't run, warn and drop it from `SANITIZERS`. `1`: fail `test-c` (and `check`) instead. CI sets `1` so a broken ASan can never pass as a UBSan-only run. Any other value, or `1` with no `address` in `SANITIZERS`, is a usage error |
 
 The native tests (`tests/test_sum.c`) build with `-fno-sanitize-recover=all`.
-I checked that the gate bites: with the overflow guard removed, UBSan aborts
-the run with `signed integer overflow: 9223372036854775805 +
-9223372036854775806`.
+I checked that each sanitizer bites by breaking the code on purpose:
+
+| Injected bug | Sanitizer | Result |
+|---|---|---|
+| Overflow guard removed from `sum.c` | UBSan (macOS and Linux) | `runtime error: signed integer overflow: 9223372036854775805 + 9223372036854775806` |
+| Test loop reads one past its array (`k <=`) | ASan (Linux) | `ERROR: AddressSanitizer: global-buffer-overflow ... READ of size 8 ... in test_sums` |
+| `int64_t acc = 0;` changed to `int64_t acc;` | MSan (Linux) | `WARNING: MemorySanitizer: use-of-uninitialized-value` |
+
+### Linux and CI
+
+Verified in a `ubuntu:24.04` container on Docker 27.4: in full on
+linux/arm64 (native), and on linux/amd64 under emulation with the limits noted
+in Trade-offs. These are the commands a GitHub Actions `ubuntu-24.04` job
+needs:
+
+```sh
+sudo apt-get update
+# libclang-rt-18-dev holds the sanitizer runtimes; the clang package alone
+# can't link -fsanitize=address. llvm-18 provides llvm-symbolizer, which
+# turns sanitizer reports into file:line stack traces.
+sudo apt-get install -y --no-install-recommends clang libclang-rt-18-dev llvm-18 make python3
+export PATH="/usr/lib/llvm-18/bin:$PATH"    # llvm-symbolizer
+# plus uv (astral-sh/setup-uv, or: curl -LsSf https://astral.sh/uv/install.sh | sh)
+cd lower_with_c_and_python
+make check CC=clang REQUIRE_ASAN=1
+make test-msan CC=clang
+make run CC=clang
+```
+
+`REQUIRE_ASAN=1` earned its place on the first Linux run: without
+`libclang-rt-18-dev`, the ASan probe failed with `cannot find
+.../libclang_rt.asan_static-aarch64.a`. Under the default it would have quietly
+dropped to UBSan. Also checked on that container: `make test-c CC=gcc
+REQUIRE_ASAN=1` (GCC 13.3, the runner's default `cc`) passes with ASan +
+UBSan, and the Python tests pass on 3.11.13 (uv-managed) as well as 3.12.3.
 
 ## Failure modes
 
@@ -235,7 +289,7 @@ the run with `signed integer overflow: 9223372036854775805 +
 | Re-entrant call from a callback | | Works. The inner call sees the outer call's flag handler, so it doesn't defer again; on Ctrl+C the inner call finishes and the outer one stops | `test_reentrant_call_from_callback` |
 | C and Python both printing | Two stdio buffers; piped output reorders | The library never prints; progress goes through the callback | (by construction) |
 | Uninitialised variable (first version) | Undefined behaviour; garbage that changes per build and run | `-Wconditional-uninitialized -Werror` and `clang --analyze` in `make check`; both reject `ub_demo.c` | `make ub-demo`, `make lint` |
-| ASan broken on the toolchain | `make check` would hang forever | Probe with a 3 s timeout. Default: fall back to the other sanitizers with a warning. `REQUIRE_ASAN=1`: fail with the reason | Observed on this machine (see Trade-offs) |
+| ASan broken or missing on the toolchain | `make check` would hang (macOS) or fail to link (Linux without `libclang-rt-18-dev`) | Probe with a 3 s timeout. Default: fall back to the other sanitizers with a warning. `REQUIRE_ASAN=1`: fail with the reason | Both observed: macOS hang, Ubuntu missing runtime |
 
 ## What the first version got wrong
 
@@ -249,21 +303,39 @@ the run with `signed integer overflow: 9223372036854775805 +
    or `double` would have broken silently.
 3. **`int i, sum;` left `sum` uninitialised.** Reading it is undefined
    behaviour. The same code returned 4950 at `-O0` inside the Python process
-   and 1797663254 at `-O2`. Standalone it gives a different garbage value on
-   every run (ASLR moves the stack). "It works at -O0" was luck. What catches
-   it, measured with Apple clang 17 (`make ub-demo` reproduces this):
+   and 1797663254 at `-O2`. Standalone on macOS it gives a different garbage
+   value on every run (ASLR moves the stack). On Linux it printed the right
+   answer, 4950, at `-O0` (the stack slot happened to be zero) and 4951 with
+   UBSan. "It works at -O0" was luck. What catches it (`make ub-demo`
+   reproduces this):
 
-   | Tool | Catches it? |
-   |---|---|
-   | `-Wall -Wextra` at `-O0` to `-O3` | No |
-   | `-Wuninitialized`, `-Wsometimes-uninitialized` | No |
-   | `-Wconditional-uninitialized` (not in `-Wall`/`-Wextra`) | Yes, now in the build with `-Werror` |
-   | `clang --analyze` | Yes, now in `make lint` |
-   | UBSan | No: it doesn't track initialisation (prints garbage) |
-   | ASan | No: it detects bad addresses, not uninitialised values |
-   | MSan | It's the right tool, but Linux only; not available on macOS |
-   | `-ftrivial-auto-var-init=pattern` | Makes it deterministic and visibly wrong (-1431650816) |
-   | `-ftrivial-auto-var-init=zero` | Hides it (prints 4950) |
+   | Tool | Apple clang 17, macOS | clang 18, Ubuntu 24.04 |
+   |---|---|---|
+   | `-Wall -Wextra` at `-O0` to `-O3` | No | No |
+   | `-Wuninitialized`, `-Wsometimes-uninitialized` | No | not tried |
+   | `-Wconditional-uninitialized` (not in `-Wall`/`-Wextra`) | Yes, now in the build with `-Werror` | Yes |
+   | `clang --analyze` | Yes, now in `make lint` | Yes |
+   | UBSan | No: it doesn't track initialisation (garbage) | No (4951) |
+   | ASan | No: it detects bad addresses, not uninitialised values | not tried, same reason |
+   | MSan | Not available on macOS | **Yes**, at every `-O` level (below) |
+   | `-ftrivial-auto-var-init=pattern` | Deterministic and visibly wrong (-1431650816) | Same |
+   | `-ftrivial-auto-var-init=zero` | Hides it (4950) | Same |
+
+   MSan is the tool built for exactly this bug. At `-O0` it reports the read
+   at its source line, with origin tracking pointing back at the loop:
+
+   ```console
+   $ make ub-demo CC=clang     # Linux; last row
+     -O0 -fsanitize=memory      MemorySanitizer: use-of-uninitialized-value in sum() ub_demo.c:21
+   ```
+
+   Line 21 is `callback_type(sum);`. Since clang 16, MSan checks function
+   arguments eagerly, so passing the garbage to the callback is the first
+   reported use. At `-O1`/`-O2` it still fires, but `sum()` is inlined and the
+   report points at the `printf` in `main`, with origin tracking unable to say
+   where the value came from ("ORIGIN: invalid"). That's why the demo row uses
+   `-O0`, and `make test-msan` uses `-O1`, as the MSan docs recommend for
+   speed.
 
 4. **`int` overflows early.** `sum(range(65537))` is 2,147,516,416, past
    `INT_MAX`, so any `num` above 65,536 was signed overflow, which is also
@@ -302,9 +374,18 @@ the run with `signed integer overflow: 9223372036854775805 +
   during the call. An API that stores a callback (registration, async
   completion) needs the Python side to keep the thunk alive until it is
   unregistered, usually on an object with an explicit `close()`.
-- **ASan didn't run on this machine.** With Apple clang 17 on macOS 26.6 it
-  hangs at startup in `FindDynamicShadowStart`, even for an empty program. So
-  the native tests ran under UBSan only here. On Linux they get ASan and UBSan.
+- **ASan doesn't run on macOS here.** With Apple clang 17 on macOS 26.6 it
+  hangs at startup in `FindDynamicShadowStart`, even for an empty program, so
+  local `make check` on this Mac runs the native tests under UBSan only. ASan
+  and MSan coverage comes from Linux (CI), where `REQUIRE_ASAN=1` makes sure
+  it really runs.
+- **x86_64 was checked under emulation only** (linux/amd64 on an arm64 Mac).
+  There, ASan (with `ASAN_OPTIONS=detect_leaks=0`), UBSan, the analyzer and
+  the Python tests all pass. LeakSanitizer ("does not work under ptrace") and
+  MSan (can't map its shadow memory) can't start under the emulator, and
+  `REQUIRE_ASAN=1` correctly fails on the LSan error. Both work in the native
+  arm64 container, and GitHub's x86_64 runners are real VMs, so the first CI
+  run is the remaining confirmation for x86_64.
 - **Not covered:** Windows (`.dll`, no Makefile support), free-threaded Python
   builds, and GCC (the Makefile adds clang-only flags only when `CC` is clang;
   GCC's equivalent warning is `-Wmaybe-uninitialized`, untested here).
