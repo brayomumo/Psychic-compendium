@@ -1,0 +1,40 @@
+# Canonical lint, format and type-check config for every Python prototype in
+# Psychic-compendium. Copy it verbatim into the prototype directory. Changes
+# belong in templates/pyproject.toml first, then get propagated everywhere.
+
+[tool.ruff]
+line-length = 80 # Google Python Style Guide
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "UP",  # pyupgrade
+    "SIM", # flake8-simplify
+    "RUF", # ruff-specific
+    "PL",  # pylint
+    "N",   # pep8-naming
+    "C4",  # flake8-comprehensions
+    "D",   # pydocstyle, Google convention below
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+# Tests document themselves through their names; magic values are the point.
+"tests/**" = ["D", "PLR2004"]
+
+[tool.mypy]
+strict = true
+python_version = "3.11"
+warn_unreachable = true
+
+# Prototype-specific: tests import their helper module (tests/support.py) as
+# a top-level module, so tell isort it is first-party, not third-party.
+[tool.ruff.lint.isort]
+known-first-party = ["support"]
