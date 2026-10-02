@@ -1,0 +1,26 @@
+# Canonical golangci-lint (v1.6x config format) for every Go prototype in
+# Psychic-compendium. Copy it verbatim into the module root. Changes belong in
+# templates/.golangci.yml first, then get propagated everywhere.
+run:
+  timeout: 3m
+
+linters:
+  enable:
+    # defaults: errcheck, gosimple, govet, ineffassign, staticcheck, unused
+    - errorlint  # errors.Is/As and %w, never == on wrapped errors
+    - gocritic   # common bug and style patterns
+    - gofmt
+    - goimports
+    - misspell
+    - nolintlint # every //nolint must name a linter and say why
+    - revive     # golint successor: exported-symbol docs, naming
+    - unconvert
+
+linters-settings:
+  nolintlint:
+    require-explanation: true
+    require-specific: true
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
