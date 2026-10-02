@@ -266,7 +266,22 @@ A prototype change is done when every box is ticked:
   is part of `make check`.
   - Apple clang 17 on macOS 26 hangs in ASan at startup, so the Makefile probes ASan with a timeout
     and falls back to UBSan with a warning.
-  - CI sets `REQUIRE_ASAN=1`, which turns that fallback into a failure.
+  - CI sets `REQUIRE_ASAN=1`, which turns that fallback into a failure. Strictness knobs are named
+    `REQUIRE_<THING> ?= 0`, accept only `0` or `1`, and exit 2 on anything else.
+  - On Linux, `make test-msan` (clang only) runs the native test under MemorySanitizer, the one
+    sanitizer that catches uninitialised reads directly. Platform-only targets exit 2 elsewhere, with a
+    message naming `CC` and the OS. The Makefile gates them with `UNAME_S := $(shell uname -s)` and
+    `HAS_<FEATURE>` flags.
+  - Show that each sanitizer works by injecting one bug per sanitizer into a scratch copy, and record
+    the results in a README table. A demo row that couldn't run its tool reports that failure, never
+    "not detected".
+  - CI uses `CC=clang`, installs `libclang-rt-<ver>-dev` (without it, ASan can't link on Ubuntu) and
+    `llvm-<ver>` (for `llvm-symbolizer`, so reports show file and line), and puts
+    `/usr/lib/llvm-<ver>/bin` on `PATH`. LeakSanitizer stays on. Under emulation (e.g. `act` on Apple
+    Silicon), LSan and MSan can't start, so set `ASAN_OPTIONS=detect_leaks=0` there.
+  - Verify Linux behaviour locally in `ubuntu:24.04`, on a copy of the prototype so root-owned build
+    outputs stay out of the worktree. Treat native-architecture results as the evidence, and label
+    emulated results with their limits.
 - **ctypes:**
   - Declare `argtypes` and `restype` for every function.
   - Range-check integers before converting, because `c_int64(2**64 + 5)` is silently `5`.
