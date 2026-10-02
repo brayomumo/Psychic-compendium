@@ -22,12 +22,11 @@ import (
 	"log/slog"
 	"net"
 	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"github.com/brayomumo/Psychic-compendium/simple-go-rest-api/internal/api"
 	"github.com/brayomumo/Psychic-compendium/simple-go-rest-api/internal/server"
+	"github.com/brayomumo/Psychic-compendium/simple-go-rest-api/internal/sigctx"
 	"github.com/brayomumo/Psychic-compendium/simple-go-rest-api/internal/store"
 )
 
@@ -66,14 +65,14 @@ func run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 		return code
 	}
 	log := newLogger(stderr, opts.logJSON)
-	ctx, stop := notifyContext()
+	ctx, stop := sigctx.NotifyContext()
 	defer stop()
 
 	st, closeStore, err := openStore(ctx, opts, log)
 	if err != nil {
-		if sig := signalCause(ctx); sig != 0 {
+		if sig := sigctx.Signal(ctx); sig != 0 {
 			log.Warn("interrupted during startup", "signal", sig.String())
-			return 128 + int(sig)
+			return sigctx.ExitCode(sig)
 		}
 		log.Error("startup failed", "error", err)
 		return exitFailure
@@ -104,9 +103,9 @@ func run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 		log.Error("server stopped", "error", err)
 		return exitFailure
 	}
-	if sig := signalCause(ctx); sig != 0 {
+	if sig := sigctx.Signal(ctx); sig != 0 {
 		log.Info("stopped by signal", "signal", sig.String())
-		return 128 + int(sig)
+		return sigctx.ExitCode(sig)
 	}
 	return exitOK // Serve returns nil only after ctx is done, so in practice unreachable
 }
@@ -209,43 +208,4 @@ func openStore(ctx context.Context, o options, log *slog.Logger) (api.Store, fun
 	}
 	log.Info("connected to PostgreSQL; schema is up to date")
 	return pg, pg.Close, nil
-}
-
-// signalError is the cancellation cause recorded when a signal arrives.
-type signalError struct{ sig syscall.Signal }
-
-func (e signalError) Error() string { return "received " + e.sig.String() }
-
-// signalCause returns the signal that cancelled ctx, or 0.
-func signalCause(ctx context.Context) syscall.Signal {
-	var se signalError
-	if errors.As(context.Cause(ctx), &se) {
-		return se.sig
-	}
-	return 0
-}
-
-// notifyContext returns a context cancelled by SIGINT or SIGTERM, with the
-// signal as the cancellation cause. signal.NotifyContext cannot say which
-// signal arrived, and the exit status follows the 128+n convention.
-//
-// After the first signal, handling is reset to the default, so a second
-// Ctrl+C terminates at once if a graceful shutdown ever hangs.
-func notifyContext() (context.Context, func()) {
-	ctx, cancel := context.WithCancelCause(context.Background())
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		select {
-		case s := <-signals:
-			signal.Stop(signals)
-			sig, _ := s.(syscall.Signal) // always a syscall.Signal on Unix
-			cancel(signalError{sig: sig})
-		case <-ctx.Done():
-		}
-	}()
-	return ctx, func() {
-		signal.Stop(signals)
-		cancel(nil)
-	}
 }
