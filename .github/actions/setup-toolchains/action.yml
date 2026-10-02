@@ -1,0 +1,44 @@
+# Installs every toolchain a prototype's `make check` can need, at the versions
+# in STANDARDS.md (appendix). Third-party actions are pinned to full commit SHAs;
+# the trailing comment names the release the SHA belongs to.
+name: Set up toolchains
+description: Go, Python, uv, the Go linters, and clang with sanitizer runtimes.
+
+inputs:
+  python-version:
+    description: Python version for actions/setup-python.
+    default: "3.14"
+
+runs:
+  using: composite
+  steps:
+    - name: Go
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version: "1.23"
+        cache-dependency-path: "**/go.sum"
+
+    - name: Python
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: uv
+      uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      with:
+        version: "0.8.14"
+
+    - name: Go linters
+      shell: bash
+      run: |
+        go install honnef.co/go/tools/cmd/staticcheck@2025.1.1
+        go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.5
+
+    # Ubuntu's clang can't link -fsanitize=address without libclang-rt-<ver>-dev,
+    # and sanitizer reports need llvm-symbolizer (llvm-<ver>) for file:line.
+    - name: clang with sanitizer runtimes
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends clang-18 libclang-rt-18-dev llvm-18
+        echo "/usr/lib/llvm-18/bin" >> "$GITHUB_PATH"

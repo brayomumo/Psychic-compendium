@@ -1,0 +1,147 @@
+# Runs every prototype's own gate on Linux. Prototypes are discovered the same
+# way the root Makefile finds them (a top-level directory with a Makefile), so
+# adding one never requires editing this file. See STANDARDS.md.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  discover:
+    name: Discover prototypes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      all: ${{ steps.list.outputs.all }}
+      python: ${{ steps.list.outputs.python }}
+      integration: ${{ steps.list.outputs.integration }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: List prototypes
+        id: list
+        run: |
+          # One JSON array of non-empty lines from stdin.
+          to_json() { jq -R . | jq -cs 'map(select(length > 0))'; }
+          mapfile -t prototypes < <(make -s list)
+          {
+            echo "all=$(printf '%s\n' "${prototypes[@]}" | to_json)"
+            # Any prototype with Python in it, at most one directory deep.
+            echo "python=$(for d in "${prototypes[@]}"; do
+              find "$d" -maxdepth 2 -name pyproject.toml | grep -q . && echo "$d"
+            done | to_json)"
+            echo "integration=$(for d in "${prototypes[@]}"; do
+              grep -q '^test-integration:' "$d/Makefile" && echo "$d"
+            done | to_json)"
+          } >> "$GITHUB_OUTPUT"
+          cat "$GITHUB_OUTPUT"
+
+  check:
+    name: check (${{ matrix.prototype }})
+    needs: discover
+    # GitHub rejects an empty matrix, so skip rather than error.
+    if: needs.discover.outputs.all != '[]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        prototype: ${{ fromJSON(needs.discover.outputs.all) }}
+    env:
+      PROTOTYPE: ${{ matrix.prototype }}
+      # The C prototype needs clang (analyzer, -Wconditional-uninitialized) and
+      # must fail rather than fall back when AddressSanitizer is unavailable.
+      CC: clang
+      REQUIRE_ASAN: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-toolchains
+
+      - name: make check
+        run: make -C "$PROTOTYPE" check
+
+      - name: make run (must exit 0 on its own)
+        run: timeout 600 make -C "$PROTOTYPE" run
+
+      - name: make test-msan
+        if: matrix.prototype == 'lower_with_c_and_python'
+        run: make -C "$PROTOTYPE" test-msan
+
+  python-compat:
+    name: python 3.11 (${{ matrix.prototype }})
+    needs: discover
+    if: needs.discover.outputs.python != '[]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        prototype: ${{ fromJSON(needs.discover.outputs.python) }}
+    env:
+      PROTOTYPE: ${{ matrix.prototype }}
+      CC: clang
+      REQUIRE_ASAN: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-toolchains
+        with:
+          python-version: "3.11"
+
+      # The oldest supported Python runs the tests; lint and types already
+      # target 3.11 in the check job.
+      - name: make test
+        run: make -C "$PROTOTYPE" test
+
+  integration:
+    name: integration (${{ matrix.prototype }})
+    needs: discover
+    if: needs.discover.outputs.integration != '[]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        prototype: ${{ fromJSON(needs.discover.outputs.integration) }}
+    env:
+      PROTOTYPE: ${{ matrix.prototype }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-toolchains
+
+      # Each prototype's test-integration target starts the Docker services it
+      # needs; the runner is discarded afterwards, so no teardown is required.
+      - name: make test-integration
+        run: make -C "$PROTOTYPE" test-integration
+
+  # One stable check name for branch protection, whatever the matrix contains.
+  ci-ok:
+    name: ci-ok
+    if: always()
+    needs: [discover, check, python-compat, integration]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Fail if any job failed or was cancelled
+        env:
+          RESULTS: ${{ toJSON(needs.*.result) }}
+        run: |
+          echo "$RESULTS"
+          if echo "$RESULTS" | grep -Eq '"(failure|cancelled)"'; then exit 1; fi
