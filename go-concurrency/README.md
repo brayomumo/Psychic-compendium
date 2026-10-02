@@ -48,8 +48,11 @@ fixes a deadlock, only delays it by N values. It doesn't raise steady-state thro
 that is set by how fast consumers work (see [Run](#run)).
 
 **Cancellation travels through a `context.Context`.** Any operation that could block forever also
-selects on `ctx.Done()`. Then one `cancel()` (here, wired to SIGINT/SIGTERM through
-`signal.NotifyContext`) unblocks every goroutine.
+selects on `ctx.Done()`. Then one `cancel()` unblocks every goroutine. Here `main` wires that
+cancel to SIGINT and SIGTERM through a small `notifyContext` helper built on
+`context.WithCancelCause`. The helper records which signal arrived, so the exit status can follow
+the 128+n convention, which `signal.NotifyContext` can't tell apart. It then restores default
+handling, so a second Ctrl+C kills the process even if shutdown hangs.
 
 ## Design
 
@@ -123,8 +126,12 @@ producers blocked on send: 412ms in total (backpressure)
 | `SEED` | `1` | `-seed` | seed for the per-job durations |
 | `ARGS` | empty | | extra flags, e.g. `ARGS=-v` to log every finished job to stderr |
 | `BIN` | `bin/go-concurrency` | | where `make build` writes the binary |
+| `GO` | `go` | | Go command used by every recipe |
+| `STATICCHECK` | `staticcheck` | | staticcheck command used by `make lint` |
+| `GOLANGCI_LINT` | `golangci-lint` | | golangci-lint command used by `make lint` |
 
-For example: `make run CONSUMERS=8 BUFFER=0` or `make run ARGS=-v`.
+For example: `make run CONSUMERS=8 BUFFER=0` or `make run ARGS=-v`. The Makefile also exports
+`GOWORK=off`: the module is standalone and must never pick up a `go.work` from a parent directory.
 
 The flag defaults match the Make defaults. The summary goes to stdout, and logs, usage and errors go to
 stderr.
@@ -134,24 +141,27 @@ stderr.
 | 0 | every job consumed |
 | 1 | runtime failure |
 | 2 | bad flags or arguments; every problem is listed, followed by usage |
-| 130 | cancelled by SIGINT or SIGTERM after a clean shutdown (`signal.NotifyContext` can't tell them apart) |
+| 130 | clean shutdown after SIGINT (128 + 2) |
+| 143 | clean shutdown after SIGTERM (128 + 15) |
+
+A second signal during shutdown is not caught. The process dies of it, as a shell expects.
 
 Ctrl+C mid-run stops promptly and reports exactly what was left unfinished:
 
 ```console
 $ bin/go-concurrency -jobs 100000 -work 50ms    # Ctrl+C after ~300ms
 running: producers=2 consumers=4 jobs=100000 buffer=10 work=50ms seed=1
-consumed 20/100000 jobs in 285ms (produced 34)
-per consumer: [4 5 7 4]
-producers blocked on send: 569ms in total (backpressure)
-interrupted: finished 20 of 100000 jobs; 14 produced jobs were left unfinished
+consumed 27/100000 jobs in 379ms (produced 41)
+per consumer: [8 6 7 6]
+producers blocked on send: 757ms in total (backpressure)
+received interrupt: finished 27 of 100000 jobs; 14 produced jobs were left unfinished
 $ echo $?
 130
 ```
 
 The 14 unfinished jobs are the 4 in the consumers' hands plus the 10 in the buffer, so in-flight
-work is exactly `consumers + buffer`. The process exited 7 to 9 ms after the signal, with no
-process left behind.
+work is exactly `consumers + buffer`. The process exited within 15 ms of SIGINT (status 130), and
+within 8 ms of SIGTERM in the same test (status 143). No process was left behind.
 
 ### What buffer size and consumer count actually change
 
@@ -184,8 +194,8 @@ go vet ./...
 staticcheck ./...
 golangci-lint run ./...
 go test -race -count=1 ./...
-ok  	github.com/brayomumo/Psychic-compendium/go-concurrency	1.267s
-ok  	github.com/brayomumo/Psychic-compendium/go-concurrency/internal/pipeline	2.192s
+ok  	github.com/brayomumo/Psychic-compendium/go-concurrency	2.093s
+ok  	github.com/brayomumo/Psychic-compendium/go-concurrency/internal/pipeline	2.001s
 ```
 
 `make check` runs gofmt, `go vet`, staticcheck, golangci-lint (the repo-wide `.golangci.yml`) and
@@ -203,7 +213,9 @@ run 30 times (`go test -race -count=10 -cpu 1,2,8 ./...`) without a failure.
 | More consumers than jobs | Some consumers never get a job | They block in `range` until the close, then return | `TestRunExitCodes/more_consumers_than_jobs` |
 | Zero jobs | Nothing to do | Producers return at once, Run closes and returns | `TestRunWithZeroJobsReturnsImmediately` |
 | A job lost or processed twice | Wrong results | IDs are partitioned by stride and each received value goes to exactly one consumer. The full multiset of IDs is checked across 36 configurations. | `TestRunProcessesEveryJobExactlyOnce` |
-| Ctrl+C or SIGTERM mid-run | Work must stop promptly | `signal.NotifyContext` cancels ctx, the partial summary is printed, exit 130 | `TestInterruptSignalExitsCleanly` (real signal, real process), `TestRunReportsInterruption` |
+| Ctrl+C or SIGTERM mid-run | Work must stop promptly | `notifyContext` cancels ctx with the signal as its cause, the partial summary is printed, and the exit status is 128+n (130 or 143) | `TestInterruptSignalExitsCleanly` (real signals, real process), `TestRunReportsInterruption`, `TestNotifyContextRecordsSignalAsCause` |
+| Shutdown hangs after the first signal | A handler that keeps catching signals would make Ctrl+C useless | The first signal resets handling to the default (`signal.Stop`), so a second one kills the process | `TestSecondSignalKillsHungShutdown` (a deliberately hung process dies of the second SIGINT; fails if `signal.Stop` is removed) |
+| Signal arrives before the handler is installed | The process gets the disposition it inherited. If the parent started it with SIGINT ignored (any background job of a non-interactive shell), the Ctrl+C is dropped silently. This was seen while verifying, on the first launch of a fresh macOS build. | The handler is installed first thing in `main`, and the `running:` banner is printed only afterwards, so scripts and tests wait for the banner before signalling | `TestInterruptSignalExitsCleanly` waits for the banner |
 | Cancel while producers are blocked on send | A plain send would block forever | Producers select on `ctx.Done()` next to the send | `TestCancellationStopsEveryGoroutine` |
 | Cancel while consumers are mid-job | A plain `time.Sleep` would finish the job regardless | The work timer selects on `ctx.Done()`, and the interrupted job is not counted | `TestCancellationStopsEveryGoroutine` |
 | Cancel before Run starts | `select` picks at random among ready cases, so sends could still win | Producers and consumers check `ctx.Err()` first, so nothing is consumed | `TestCancelledBeforeStartConsumesNothing` |

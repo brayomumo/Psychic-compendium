@@ -6,8 +6,11 @@
 //
 //	go-concurrency [-producers N] [-consumers N] [-jobs N] [-buffer N] [-work D] [-seed N] [-v]
 //
-// SIGINT (Ctrl+C) or SIGTERM cancels the run: producers stop, consumers stop, the partial summary is
-// printed and the exit status is 130.
+// SIGINT (Ctrl+C) or SIGTERM cancels the run: producers stop, consumers stop and the partial summary
+// is printed. A second signal kills the process at once.
+//
+// Exit status: 0 when every job is consumed, 1 on a runtime failure, 2 on a usage error, and 128+n
+// after a clean shutdown on signal n (130 for SIGINT, 143 for SIGTERM).
 package main
 
 import (
@@ -25,16 +28,15 @@ import (
 	"github.com/brayomumo/Psychic-compendium/go-concurrency/internal/pipeline"
 )
 
-// Exit statuses.
+// Exit statuses. A clean shutdown on signal n exits with 128+n instead; see signalError.
 const (
-	exitOK          = 0
-	exitError       = 1
-	exitUsage       = 2   // bad flags or arguments, as the flag package does by default
-	exitInterrupted = 130 // shell convention for "terminated by Ctrl+C" (128 + SIGINT)
+	exitOK      = 0
+	exitFailure = 1
+	exitUsage   = 2 // bad flags or arguments, as the flag package does by default
 )
 
 func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := notifyContext()
 	code := run(ctx, os.Args[1:], os.Stdout, os.Stderr)
 	stop()
 	os.Exit(code)
@@ -87,12 +89,17 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	case err == nil:
 		return exitOK
 	case errors.Is(err, context.Canceled):
-		fmt.Fprintf(stderr, "interrupted: finished %d of %d jobs; %d produced jobs were left unfinished\n",
-			stats.Consumed, cfg.Jobs, stats.Produced-stats.Consumed)
-		return exitInterrupted
+		cause := context.Cause(ctx)
+		fmt.Fprintf(stderr, "%v: finished %d of %d jobs; %d produced jobs were left unfinished\n",
+			cause, stats.Consumed, cfg.Jobs, stats.Produced-stats.Consumed)
+		var sig signalError
+		if errors.As(cause, &sig) {
+			return 128 + int(sig.sig) // shell convention for "stopped by signal n"
+		}
+		return exitFailure // cancelled for a reason other than a signal
 	default:
 		fmt.Fprintf(stderr, "error: %v\n", err)
-		return exitError
+		return exitFailure
 	}
 }
 
@@ -109,4 +116,34 @@ func roundDuration(d time.Duration) time.Duration {
 		return d.Round(time.Microsecond)
 	}
 	return d.Round(time.Millisecond)
+}
+
+// signalError is the cancellation cause recorded when a signal arrives.
+type signalError struct{ sig syscall.Signal }
+
+func (e signalError) Error() string { return "received " + e.sig.String() }
+
+// notifyContext returns a context cancelled by SIGINT or SIGTERM, with the signal as the
+// cancellation cause. signal.NotifyContext would not say which signal arrived, and the exit status
+// follows the 128+n convention.
+//
+// After the first signal, handling is reset to the default, so a second Ctrl+C terminates
+// immediately if shutdown ever hangs.
+func notifyContext() (context.Context, func()) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		select {
+		case s := <-signals:
+			signal.Stop(signals)
+			sig, _ := s.(syscall.Signal) // always a syscall.Signal on Unix
+			cancel(signalError{sig: sig})
+		case <-ctx.Done():
+		}
+	}()
+	return ctx, func() {
+		signal.Stop(signals)
+		cancel(nil)
+	}
 }
