@@ -5,7 +5,7 @@ import inspect
 import io
 import itertools
 import unittest
-from collections.abc import Generator
+from collections.abc import Generator, Iterator
 from typing import Any
 
 import pipeline
@@ -63,6 +63,17 @@ class EndToEndTest(unittest.TestCase):
             pipeline.feed(["1", "a", "x"], stages.head)
         self.assertTrue(closed(*stages.all()))
         # Downstream was closed normally, so the partial batch was flushed.
+        self.assertEqual(stages.batches, [["a"]])
+
+    def test_source_crash_closes_every_stage_and_propagates(self) -> None:
+        def crashing_source() -> Iterator[str]:
+            yield from ["1", "a"]
+            raise ConnectionResetError("source went away")
+
+        stages = Stages()
+        with self.assertRaises(ConnectionResetError):
+            pipeline.feed(crashing_source(), stages.head)
+        self.assertTrue(closed(*stages.all()))
         self.assertEqual(stages.batches, [["a"]])
 
     def test_negative_frame_length_is_rejected(self) -> None:
