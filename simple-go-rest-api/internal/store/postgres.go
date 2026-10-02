@@ -60,6 +60,13 @@ func OpenPostgres(ctx context.Context, dsn string) (*Postgres, error) {
 	if cfg.ConnConfig.ConnectTimeout == 0 {
 		cfg.ConnConfig.ConnectTimeout = defaultConnectTimeout
 	}
+	// Always send parameters separately from the SQL (the extended
+	// protocol), even if the DSN asks for default_query_exec_mode=
+	// simple_protocol. The simple protocol makes pgx interpolate parameters
+	// into the SQL text client-side, and that code path is where
+	// GO-2026-5004 (SQL injection via dollar-quoted literals, fixed in
+	// pgx 5.9.2, which needs Go 1.25) lives. See the README.
+	cfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeCacheStatement
 	cfg.HealthCheckPeriod = defaultHealthCheckEvery
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)

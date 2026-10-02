@@ -130,6 +130,39 @@ func TestPostgresSchemaRejectsInvalidRowsWrittenDirectly(t *testing.T) {
 	}
 }
 
+// The DSN must not be able to switch the pool to client-side parameter
+// interpolation, the code path of GO-2026-5004 in pgx 5.7.6.
+func TestPostgresNeverUsesTheSimpleProtocol(t *testing.T) {
+	dsn := isolatedDSN(t)
+	u, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := u.Query()
+	q.Set("default_query_exec_mode", "simple_protocol")
+	u.RawQuery = q.Encode()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	s, err := OpenPostgres(ctx, u.String())
+	if err != nil {
+		t.Fatalf("OpenPostgres: %v", err)
+	}
+	defer s.Close()
+	if mode := s.pool.Config().ConnConfig.DefaultQueryExecMode; mode != pgx.QueryExecModeCacheStatement {
+		t.Errorf("exec mode = %v, want QueryExecModeCacheStatement", mode)
+	}
+	// A value full of SQL metacharacters must round-trip as data.
+	evil := `$$; DROP TABLE albums; --$$ ' "`
+	a, err := s.Create(ctx, draft(t, evil, "Artist", 1))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	got, err := s.Get(ctx, a.ID)
+	if err != nil || got.Title != evil {
+		t.Errorf("round-trip = %q, %v; want the title unchanged", got.Title, err)
+	}
+}
+
 func TestOpenPostgresWrongPasswordFailsFast(t *testing.T) {
 	dsn := integrationDSN(t)
 	u, err := url.Parse(dsn)
