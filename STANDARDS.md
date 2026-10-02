@@ -424,6 +424,11 @@ once, `make -j check` to run them in parallel, and `make list` to show what it f
   real one never returns. Mock `os.write` to keep the output clean.
 - **Version-dependent tests** use `skipUnless` / `skipIf` with a small `python_at_least(minor)` helper,
   and are verified on the oldest supported version via `uv run --python 3.11`.
+- **Guard calls that are expected to fail or block.** Run them on a guarded thread (e.g.
+  `expect_error(fn, exc)` in `tests/support.py`) with one named upper bound (`GUARD_S`), so a
+  regression fails instead of hanging the main thread. Register every resource's cleanup
+  (`addCleanup` or `finally`) *before* any assertion that could fail. Non-daemon threads stuck in a
+  simulated hang otherwise block interpreter exit.
 - **Golden tests** pin every on-disk or on-the-wire format.
 - **Check the tests with mutation.** Before reporting, reintroduce key bugs in a scratch copy and
   confirm the tests fail cleanly, without hanging. Don't commit this check.
@@ -433,7 +438,10 @@ once, `make -j check` to run them in parallel, and `make list` to show what it f
 - **Stress concurrency before reporting.** Go: `go test -race -count=10 -cpu 1,2,8 ./...`. Python: 50
   sequential runs under `-X dev`, plus a run with 8 suites in parallel.
 - **A mutant that hangs the suite is a test-design defect.** Fix the test so it fails instead. The
-  watchdog base class exists for this.
+  watchdog base class exists for this. Mutation scripts give each mutant a generous timeout and
+  report HUNG separately from CAUGHT.
+- **Regenerated sample output in a README matches exactly,** including counts such as "10 files
+  already formatted".
 - **Test seams without API changes.** Swap collaborators with `mock.patch.object(queue, "Queue",
   factory)` and similar, rather than adding test-only parameters.
 - **Trigger Ctrl+C tests from a structural event** (e.g. the producer is blocked), never a timer:
@@ -446,8 +454,12 @@ once, `make -j check` to run them in parallel, and `make list` to show what it f
   Python keeps it ignored and never raises KeyboardInterrupt, and multiprocessing children inherit the
   same disposition. A Ctrl+C test launched that way silently tests nothing. Go's `signal.Notify`
   re-enables the signal, but Python does not.
-- **Launch signal tests correctly:** use `subprocess.Popen` (resetting SIGINT to `SIG_DFL` in the child
-  if needed), or `set -m` in a shell. Then assert that the handler path actually ran: its log line, the
+- **Launch signal tests correctly:** use `subprocess.Popen`, or `set -m` in a shell. To control the
+  child's starting disposition, use an exec launcher, never `preexec_fn`, which is unsafe in threaded
+  programs (ruff PLW1509):
+  - `sh -c 'trap "" INT; exec "$0" "$@"' <cmd>` to start it with SIGINT ignored;
+  - `python3 -c 'import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL);
+    os.execv(sys.argv[1], sys.argv[1:])' <cmd>` to reset it. Then assert that the handler path actually ran: its log line, the
   final state, and exit code 130 or 143.
 - **Programs that must survive an inherited `SIG_IGN`** install their handlers explicitly, and a test
   starts them with SIGINT ignored to prove it, e.g. `sh -c 'trap "" INT; exec "$0" "$@"' <cmd>`.
