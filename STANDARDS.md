@@ -90,7 +90,8 @@ A prototype change is done when every box is ticked:
   3. Build files.
   4. Docs.
 
-  Each commit should pass `make check` on its own where practical.
+  Each commit should pass `make check` on its own where practical. A removed file is deleted in the
+  commit that replaces it.
 - **Fixups:** use `git commit --fixup <sha>`, then `git rebase --autosquash main` (non-interactive,
   git 2.44 or newer). Interactive rebases are not used.
 - **Importing an idea branch:** start a new branch from `main`. Import the original files in one
@@ -160,9 +161,14 @@ A prototype change is done when every box is ticked:
     `tests/procs.py`).
 - **Entry points.** Each runnable module exposes `def main(argv: Sequence[str] | None = None) -> int`
   and ends with `raise SystemExit(main())`. Demos without options do `del argv`.
-- **CLI validation.** Use argparse `type=` functions that raise `ArgumentTypeError("must be in
-  LOW..HIGH, got X")`. Reject NaN and infinity, and cap every flag that controls resource use with a
-  module constant.
+- **CLI validation.** Use argparse `type=` functions (e.g. `positive_int`, `non_negative_int`,
+  `non_negative_float`) that raise `ArgumentTypeError("must be in LOW..HIGH, got X")`. Reject NaN and
+  infinity, and cap every flag that controls resource use with a module constant.
+  - Show defaults by writing `(default: %(default)s)` into each help string.
+    `ArgumentDefaultsHelpFormatter` prints "(default: None)".
+  - Short metavars (`N`, `MS`). Verbosity is `-v` for INFO and `-vv` for DEBUG.
+  - A prototype with several entry points may share one private `_cli.py`: exit constants, logging
+    setup, validators, and a `run_main(body)` that maps signals to 130/143.
 - **Errors.** Define a module exception hierarchy. Custom exceptions subclass the closest built-in, and
   use mix-ins where it helps callers: `SumOverflowError(SumError, OverflowError)`,
   `LibraryLoadError(OSError)`, `BrokerClosedError(RuntimeError)`.
@@ -343,6 +349,20 @@ once, `make -j check` to run them in parallel, and `make list` to show what it f
   - Go: re-exec the test binary through `TestMain` with a `<PROG>_TEST_RUN_MAIN=1` environment
     variable, under `//go:build unix`, with `GORACE=atexit_sleep_ms=0` for children.
   - Python: launch with `subprocess.Popen` and close pipes with `communicate()`.
+- **Python test base class.** Long or concurrent suites use a `WatchdogTestCase` (`tests/support.py`).
+  It sets a per-test `faulthandler` watchdog (60 s, `exit=True`), turns warnings into errors, and
+  resets SIGINT to `default_int_handler`, restoring all three afterwards. Helpers that poll only
+  observe; they never synchronise.
+- **Start-method contract tests.** Put the shared tests in a holder class (`class Contract: class
+  Pipeline(WatchdogTestCase)`) so unittest doesn't collect the base. Subclass it once per start method
+  (`SpawnPipelineTest`, `ForkPipelineTest`, `ForkserverPipelineTest`). Picklable test-only callables
+  live in `tests/fixtures.py`, so spawned children can import them.
+- **Process-group tests.**
+  - Start the CLI with `subprocess.Popen(start_new_session=True)`, and emulate Ctrl+C with
+    `os.killpg(pgid, SIGINT)`, which reaches the whole group like a terminal would.
+  - Assert the exit code, the handler's log line, and that no `Traceback` was printed.
+  - Prove the group is empty before any cleanup kill: `os.killpg(pgid, 0)` must raise
+    `ProcessLookupError`.
 - **Golden tests** pin every on-disk or on-the-wire format.
 - **Check the tests with mutation.** Before reporting, reintroduce key bugs in a scratch copy and
   confirm the tests fail cleanly, without hanging. Don't commit this check.
@@ -387,8 +407,10 @@ One `README.md` per prototype, in plain, direct prose: no marketing, no emojis, 
 7. **`## Trade-offs and limits`**: what the design does *not* prove, when you would not use it, and what
    you would do next.
 
-A prototype may add a **`## When to use what`** section, before Trade-offs, when the concept has
-competing alternatives (for example generators vs asyncio vs threads). Label results that depend on a
+Allowed extra sections:
+- **`## Benchmark`**, after Test, when the prototype makes performance claims.
+- **`## When to use what`**, before Trade-offs, when the concept has competing alternatives (for
+  example generators vs asyncio vs threads). Label results that depend on a
 toolchain with that toolchain (for example "Apple clang 17").
 
 ## 10. Runtime conventions
@@ -446,6 +468,19 @@ These are the designs the prototypes validated. Reuse them rather than reinventi
     returned.
   - Consumers stop on close (`for range`, sentinel or end-of-stream marker).
   - A blocking send is the backpressure, and in-flight work is bounded by `consumers + buffer`.
+- **Process fan-in over pipes (Python):**
+  - One `Pipe(duplex=False)` per producer, because one connection end is not safe for concurrent
+    writers. The consumer multiplexes with `multiprocessing.connection.wait()`.
+  - The parent closes its copy of each write end right after `start()`, so EOF can arrive and later
+    children don't inherit it. Each child closes its read end, so a dead parent makes the child's next
+    send fail.
+  - An explicit end-of-stream marker (`DONE` / `FAILED`) tells a clean finish from a crash.
+  - Check liveness with `is_alive()` (`waitpid`), not process sentinels: under fork and spawn,
+    sentinels are pipes too, and grandchildren inherit them.
+  - Create thread pools only after the last fork. Block SIGINT/SIGTERM on the starting thread while
+    children start. Children ignore SIGINT, and the parent coordinates shutdown with SIGTERM.
+  - Pipes pickle everything. Objects that can't pickle can't cross, so send rebuildable state or keep
+    the object in one process.
 - **At-least-once messaging (RabbitMQ):**
   - Both sides declare the topology idempotently: durable exchange, quorum queue with
     `x-delivery-limit`, and a dead-letter exchange and queue.
@@ -477,7 +512,10 @@ These are the designs the prototypes validated. Reuse them rather than reinventi
   being released, or the same workload in-process vs across processes.
 - **Measure end to end:** until every item is processed, with nothing printed in the hot path.
 - **Show both sides of a trade-off,** e.g. a trivial workload alongside a CPU-bound one.
-- **Commit raw numbers only in the README,** next to the `make bench` command that regenerates them.
+- **Verify each run's result** before its time counts. A fast wrong answer isn't a data point.
+- **Give every benchmark a `--quick` smoke mode** that the test suite runs, so it can't rot.
+- **Commit raw numbers only in the README,** in a `## Benchmark` section after `## Test`, next to the
+  `make bench` command that regenerates them.
 
 ## 14. Starting a new prototype
 
