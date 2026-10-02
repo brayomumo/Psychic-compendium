@@ -13,16 +13,13 @@ Run ``python3 dispatcher.py --help`` for options.
 import argparse
 import asyncio
 import itertools
-import math
-import signal
-import sys
 import time
 from collections import Counter
 from collections.abc import Awaitable, Callable, Generator, Iterable, Sequence
 from dataclasses import dataclass
-from types import FrameType
 from typing import Generic, TypeVar
 
+import cli
 from prime import Sink, coroutine, forward
 
 J = TypeVar("J")
@@ -193,33 +190,6 @@ async def run_async_pool(
 # --- Demo -------------------------------------------------------------------
 
 
-def _bounded_int(low: int, high: int) -> Callable[[str], int]:
-    def parse(text: str) -> int:
-        try:
-            value = int(text)
-        except ValueError:
-            message = f"expected an integer, got {text!r}"
-            raise argparse.ArgumentTypeError(message) from None
-        if not low <= value <= high:
-            message = f"must be in {low}..{high}, got {value}"
-            raise argparse.ArgumentTypeError(message)
-        return value
-
-    return parse
-
-
-def _seconds(text: str) -> float:
-    try:
-        value = float(text)
-    except ValueError:
-        message = f"expected a number, got {text!r}"
-        raise argparse.ArgumentTypeError(message) from None
-    if not math.isfinite(value) or not 0 <= value <= MAX_JOB_SECONDS:
-        message = f"must be in 0..{MAX_JOB_SECONDS:g} seconds, got {text}"
-        raise argparse.ArgumentTypeError(message)
-    return value
-
-
 def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     """Parse and validate the demo's command line.
 
@@ -233,17 +203,17 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         description="Time a generator dispatcher against an asyncio pool."
     )
     parser.add_argument(
-        "--jobs", type=_bounded_int(0, MAX_JOBS), default=8, help="default 8"
+        "--jobs", type=cli.bounded_int(0, MAX_JOBS), default=8, help="default 8"
     )
     parser.add_argument(
         "--workers",
-        type=_bounded_int(1, MAX_WORKERS),
+        type=cli.bounded_int(1, MAX_WORKERS),
         default=4,
         help="default 4",
     )
     parser.add_argument(
         "--job-seconds",
-        type=_seconds,
+        type=cli.bounded_seconds(MAX_JOB_SECONDS),
         default=0.05,
         help="simulated wait per job, default 0.05",
     )
@@ -303,22 +273,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         with status 2 from argparse.
     """
     args = parse_args(argv)
-    signals: list[int] = []
-
-    def on_sigterm(signum: int, frame: FrameType | None) -> None:
-        # Unwind exactly like Ctrl+C so every finally block runs.
-        signals.append(signum)
-        raise KeyboardInterrupt
-
-    previous = signal.signal(signal.SIGTERM, on_sigterm)
-    try:
-        _run_demo(args.jobs, args.workers, args.job_seconds)
-    except KeyboardInterrupt:
-        print("interrupted; workers closed", file=sys.stderr)
-        return 128 + (signals[0] if signals else signal.SIGINT)
-    finally:
-        signal.signal(signal.SIGTERM, previous)
-    return 0
+    return cli.run_interruptible(
+        lambda: _run_demo(args.jobs, args.workers, args.job_seconds),
+        on_interrupt="interrupted; workers closed",
+    )
 
 
 if __name__ == "__main__":
