@@ -177,7 +177,10 @@ b4fde29f-c6e2-41d4-9946-9e12ce0a83c0
 
 The management UI is at <http://localhost:15679> (guest / guest).
 
-`make broker-down` removes the container.
+`make run` and `make test-integration` leave the broker container running, so
+repeat runs skip the broker's startup. That is safe: `make run` resets the demo
+topology each time, and every integration test creates and deletes its own.
+`make broker-down` removes the container, along with its queues and messages.
 
 ### Configuration
 
