@@ -24,8 +24,12 @@ in [`templates/`](templates/). If this file and STANDARDS.md disagree, STANDARDS
 
 ## Toolchain on the owner's machine
 
-- macOS arm64, Python 3.14, Go 1.23, Docker.
-- Python lint tools run through `uvx` (ruff, mypy). Go tools are on `PATH`: staticcheck,
-  golangci-lint 1.64.
+- macOS arm64, Python 3.14, Docker. The installed `go` is 1.23. That's fine: each Go module pins
+  `toolchain go1.27.1`, and Go downloads it on first use. Never claim a Go result from the bare 1.23
+  toolchain; run through the prototype's Makefile, which exports `GOTOOLCHAIN`.
+- Linters run pinned: ruff and mypy through `uvx`, and staticcheck, golangci-lint v2 and govulncheck
+  through `go run <pkg>@<version>`. Versions are in the STANDARDS.md appendix.
 - The macOS multiprocessing default is `spawn`; the Linux default since Python 3.14 is `forkserver`.
   Test both, plus `fork`.
+- zsh is the login shell. It doesn't word-split unquoted variables, has a `gl` alias, and leaves
+  `PIPESTATUS` empty, so run multi-step checks under `bash -c '...'`.
