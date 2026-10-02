@@ -103,7 +103,10 @@ internal/pipeline/          Config, Validate, Run, Stats
 
 ## Run
 
-Requires Go 1.22+ (developed with 1.23.4).
+`go.mod` declares `go 1.26` and pins `toolchain go1.27.1`. Any installed Go from 1.21 on can run
+the Make targets: the Makefile exports `GOTOOLCHAIN` from that `toolchain` line, and the `go`
+command downloads Go 1.27.1 on first use. Nothing is installed globally. The linters run through
+`go run` at pinned versions, so they need no separate install either.
 
 ```console
 $ make run
@@ -111,10 +114,20 @@ go build -o bin/go-concurrency .
 bin/go-concurrency -producers 2 -consumers 4 -jobs 100 \
 		-buffer 10 -work 10ms -seed 1
 running: producers=2 consumers=4 jobs=100 buffer=10 work=10ms seed=1
-consumed 100/100 jobs in 254ms (produced 100)
-per consumer: [26 29 22 23]
-producers blocked on send: 412ms in total (backpressure)
+consumed 100/100 jobs in 252ms (produced 100)
+per consumer: [29 19 25 27]
+producers blocked on send: 423ms in total (backpressure)
 ```
+
+| Make target | What it does |
+|---|---|
+| `build` | builds `$(BIN)` |
+| `run` | builds, then runs the demo with the variables below; exits on its own |
+| `test` | `go test -race -count=1 ./...` |
+| `lint` | gofmt (the pinned toolchain's), `go vet`, staticcheck, golangci-lint |
+| `check` | `lint`, then `test`: the gate every change must pass |
+| `vulncheck` | govulncheck against the Go vulnerability database (needs network, so it is not part of `check`) |
+| `clean` | removes `$(BIN)` |
 
 | Make variable | Default | Flag | Meaning |
 |---|---|---|---|
@@ -127,11 +140,15 @@ producers blocked on send: 412ms in total (backpressure)
 | `ARGS` | empty | | extra flags, e.g. `ARGS=-v` to log every finished job to stderr |
 | `BIN` | `bin/go-concurrency` | | where `make build` writes the binary |
 | `GO` | `go` | | Go command used by every recipe |
-| `STATICCHECK` | `staticcheck` | | staticcheck command used by `make lint` |
-| `GOLANGCI_LINT` | `golangci-lint` | | golangci-lint command used by `make lint` |
+| `STATICCHECK` | `$(GO) run honnef.co/go/tools/cmd/staticcheck@2026.2.1` | | used by `make lint` |
+| `GOLANGCI_LINT` | `$(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0` | | used by `make lint` |
+| `GOVULNCHECK` | `$(GO) run golang.org/x/vuln/cmd/govulncheck@v1.8.0` | | used by `make vulncheck` |
 
-For example: `make run CONSUMERS=8 BUFFER=0` or `make run ARGS=-v`. The Makefile also exports
-`GOWORK=off`: the module is standalone and must never pick up a `go.work` from a parent directory.
+For example: `make run CONSUMERS=8 BUFFER=0` or `make run ARGS=-v`. The Makefile also exports two
+settings that are not meant to be overridden. `GOWORK=off`: the module is standalone and must never
+pick up a `go.work` from a parent directory. `GOTOOLCHAIN` is read from `go.mod`'s `toolchain`
+line, so every target builds, tests and lints with Go 1.27.1. Check it with
+`make -s -p | grep '^GOTOOLCHAIN'`.
 
 The flag defaults match the Make defaults. The summary goes to stdout, and logs, usage and errors go to
 stderr.
@@ -151,39 +168,40 @@ Ctrl+C mid-run stops promptly and reports exactly what was left unfinished:
 ```console
 $ bin/go-concurrency -jobs 100000 -work 50ms    # Ctrl+C after ~300ms
 running: producers=2 consumers=4 jobs=100000 buffer=10 work=50ms seed=1
-consumed 27/100000 jobs in 379ms (produced 41)
-per consumer: [8 6 7 6]
-producers blocked on send: 757ms in total (backpressure)
-received interrupt: finished 27 of 100000 jobs; 14 produced jobs were left unfinished
+consumed 26/100000 jobs in 350ms (produced 40)
+per consumer: [7 8 6 5]
+producers blocked on send: 699ms in total (backpressure)
+received interrupt: finished 26 of 100000 jobs; 14 produced jobs were left unfinished
 $ echo $?
 130
 ```
 
 The 14 unfinished jobs are the 4 in the consumers' hands plus the 10 in the buffer, so in-flight
-work is exactly `consumers + buffer`. The process exited within 15 ms of SIGINT (status 130), and
+work is exactly `consumers + buffer`. The process exited within 10 ms of SIGINT (status 130), and
 within 8 ms of SIGTERM in the same test (status 143). No process was left behind.
 
 ### What buffer size and consumer count actually change
 
 Methodology: `producers=2 jobs=100 work=10ms seed=1`, 5 runs per row, median reported. Machine:
-Apple M3 (8 cores), macOS, Go 1.23.4. Reproduce each row with `bin/go-concurrency -consumers C
--buffer B`.
+Apple M3 (8 cores), macOS, Go 1.27.1, with other builds and tests running at the same time. That
+explains run-to-run noise of a few percent, such as the one-consumer row coming in above the ideal
+1000 ms. Reproduce each row with `bin/go-concurrency -consumers C -buffer B`.
 
 | consumers | buffer | elapsed | producers blocked on send (sum of both) |
 |---|---|---|---|
-| 2 | 0 | 501 ms | 976 ms |
-| 2 | 10 | 502 ms | 824 ms |
-| 2 | 100 | 499 ms | 19 µs |
-| 1 | 10 | 1022 ms | |
-| 2 | 10 | 501 ms | |
-| 4 | 10 | 253 ms | |
-| 8 | 10 | 130 ms | |
+| 2 | 0 | 503 ms | 972 ms |
+| 2 | 10 | 500 ms | 822 ms |
+| 2 | 100 | 503 ms | 32 µs |
+| 1 | 10 | 1057 ms | |
+| 2 | 10 | 522 ms | |
+| 4 | 10 | 256 ms | |
+| 8 | 10 | 132 ms | |
 
 The buffer changes *who waits*, not how long the work takes. Elapsed time stays at about 500 ms
 for every buffer size. A buffer as large as the job count lets the producers drop everything and
 leave almost at once. A small buffer only trims the producers' waiting at the start and end.
 Throughput scales with consumers, because they are the bottleneck: 100 jobs × 10 ms ÷ C
-consumers. Per-consumer counts vary from run to run (for example `[23 23 27 27]`), because work is
+consumers. Per-consumer counts vary from run to run (for example `[33 23 21 23]`), because work is
 shared by whoever is idle, not dealt round-robin.
 
 ## Test
@@ -191,16 +209,20 @@ shared by whoever is idle, not dealt round-robin.
 ```console
 $ make check
 go vet ./...
-staticcheck ./...
-golangci-lint run ./...
+go run honnef.co/go/tools/cmd/staticcheck@2026.2.1 ./...
+go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0 run ./...
+0 issues.
 go test -race -count=1 ./...
-ok  	github.com/brayomumo/Psychic-compendium/go-concurrency	2.093s
-ok  	github.com/brayomumo/Psychic-compendium/go-concurrency/internal/pipeline	2.001s
+ok  	github.com/brayomumo/Psychic-compendium/go-concurrency	2.379s
+ok  	github.com/brayomumo/Psychic-compendium/go-concurrency/internal/pipeline	2.217s
+$ make vulncheck
+go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+No vulnerabilities found.
 ```
 
-`make check` runs gofmt, `go vet`, staticcheck, golangci-lint (the repo-wide `.golangci.yml`) and
-then the tests, all under the race detector. `make test` runs only the tests. The suite was also
-run 30 times (`go test -race -count=10 -cpu 1,2,8 ./...`) without a failure.
+`make check` runs gofmt, `go vet`, staticcheck, golangci-lint v2 (the repo-wide `.golangci.yml`)
+and then the tests, all under the race detector. `make test` runs only the tests. Under Go 1.27.1
+the suite was also run 30 times (`go test -race -count=10 -cpu 1,2,8 ./...`) without a failure.
 
 ## Failure modes
 
