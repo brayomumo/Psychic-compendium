@@ -148,6 +148,8 @@ A prototype change is done when every box is ticked:
     named constant, documented as never delaying data.
 - **Two shutdown modes.** A normal `close()` drains, and any other exception (Ctrl+C included) aborts
   after the current item. Where both matter, a context-manager helper encodes the choice.
+- **Paired resources use `try`/`finally`** (`enable()`/`disable()`, `start()`/`stop()`). On Python
+  3.12+, a profiler left enabled blocks every later profiler.
 - **Never report success on a partial result.** If work can go missing without cancellation, that is
   a bug: fail loudly with exit 1.
 - **Comments explain why, not what.** Public functions, types and packages carry doc comments. No dead
@@ -394,6 +396,17 @@ once, `make -j check` to run them in parallel, and `make list` to show what it f
   - Assert the exit code, the handler's log line, and that no `Traceback` was printed.
   - Prove the group is empty before any cleanup kill: `os.killpg(pgid, 0)` must raise
     `ProcessLookupError`.
+- **Plant the ground truth.** A prototype about finding problems (profiling, leaks, races) plants
+  known ones and asserts the tools find them. Locate them by marker comment (`# LEAK:`) or
+  `inspect.getsourcelines`, never by hard-coded line numbers.
+- **Cold caches.** A regression test that depends on caches that last the whole process (compiled
+  regexes, imports) runs in a fresh interpreter: `subprocess.run([sys.executable, "-c", ...])`.
+- **Nested timeouts.** Subprocess timeouts (30 s) stay below the faulthandler watchdog (60 s), so a
+  hang fails one test instead of killing the run.
+- **Testing signal handlers in-process.** Mock `os._exit` with `side_effect=SystemExit`, because the
+  real one never returns. Mock `os.write` to keep the output clean.
+- **Version-dependent tests** use `skipUnless` / `skipIf` with a small `python_at_least(minor)` helper,
+  and are verified on the oldest supported version via `uv run --python 3.11`.
 - **Golden tests** pin every on-disk or on-the-wire format.
 - **Check the tests with mutation.** Before reporting, reintroduce key bugs in a scratch copy and
   confirm the tests fail cleanly, without hanging. Don't commit this check.
@@ -420,7 +433,7 @@ once, `make -j check` to run them in parallel, and `make list` to show what it f
   if needed), or `set -m` in a shell. Then assert that the handler path actually ran: its log line, the
   final state, and exit code 130 or 143.
 - **Programs that must survive an inherited `SIG_IGN`** install their handlers explicitly, and a test
-  starts them with SIGINT ignored to prove it.
+  starts them with SIGINT ignored to prove it, e.g. `sh -c 'trap "" INT; exec "$0" "$@"' <cmd>`.
 - **In-process Python signal tests** use `threading.Timer` plus `os.kill`, and check the exit code and
   that the previous handler was restored.
 - **Wait for the readiness banner before signalling, never a fixed delay.** A signal that arrives
@@ -559,7 +572,9 @@ These are the designs the prototypes validated. Reuse them rather than reinventi
   being released, or the same workload in-process vs across processes.
 - **Measure end to end:** until every item is processed, with nothing printed in the hot path.
 - **Show both sides of a trade-off,** e.g. a trivial workload alongside a CPU-bound one.
-- **Report the range observed across runs,** not the best run.
+- **Report the range observed across runs,** not the best run. Table cells read `median (min-max)`,
+  with a separate ratio column, and modes are interleaved within each repetition so that drift hits
+  them equally.
 - **Demos whose results depend on the GIL print `sys._is_gil_enabled()`,** falling back to `True` on
   versions without it.
 - **Verify each run's result** before its time counts. A fast wrong answer isn't a data point.
