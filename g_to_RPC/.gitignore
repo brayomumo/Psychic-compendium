@@ -1,2 +1,5 @@
-venv/
-bin/
+/server/bin/
+/client/.venv/
+__pycache__/
+.mypy_cache/
+.ruff_cache/
