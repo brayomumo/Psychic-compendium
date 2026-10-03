@@ -1,0 +1,38 @@
+# Canonical golangci-lint v2 config for every Go prototype in Psychic-compendium.
+# Copy it verbatim into the module root. Changes belong in templates/.golangci.yml
+# first, then get propagated everywhere (STANDARDS.md section 15).
+version: "2"
+
+linters:
+  # Defaults stay on: errcheck, govet, ineffassign, staticcheck (which includes
+  # the former gosimple and stylecheck), unused.
+  enable:
+    - errorlint  # errors.Is/As and %w, never == on wrapped errors
+    - gocritic   # common bug and style patterns
+    - misspell
+    - nolintlint # every //nolint must name a linter and say why
+    - revive     # exported-symbol docs, naming
+    - unconvert
+  settings:
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+  exclusions:
+    # Generated code (e.g. protobuf stubs) is not ours to lint.
+    generated: lax
+    # Deliberately no "comments" or "legacy" presets: doc comments on exported
+    # identifiers are required, not optional.
+    presets:
+      - common-false-positives
+      - std-error-handling
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  exclusions:
+    generated: lax
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

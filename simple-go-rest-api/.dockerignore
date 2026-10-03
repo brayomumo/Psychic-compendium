@@ -1,0 +1,8 @@
+bin/
+**/*_test.go
+.golangci.yml
+.gitignore
+compose.yaml
+Dockerfile
+Makefile
+README.md

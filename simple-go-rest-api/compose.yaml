@@ -1,0 +1,42 @@
+# Local-only stack: the albums API and PostgreSQL. Every port is bound to
+# 127.0.0.1, and the credentials are throwaway defaults for this machine.
+# `make db-up` starts only the database; `make docker-smoke` runs both.
+name: psychic-compendium-rest-api
+
+services:
+  db:
+    image: postgres:17.6-alpine
+    container_name: psychic-compendium-postgres
+    environment:
+      POSTGRES_USER: albums
+      POSTGRES_PASSWORD: albums
+      POSTGRES_DB: albums
+    ports:
+      - "127.0.0.1:${DB_PORT:-5439}:5432"
+    healthcheck:
+      # pg_isready succeeds only once the server accepts connections, so
+      # dependants never start against a database that is still booting.
+      test: ["CMD-SHELL", "pg_isready -U albums -d albums"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  api:
+    build: .
+    container_name: psychic-compendium-rest-api
+    environment:
+      # Inside the compose network the database is reachable as "db".
+      DATABASE_URL: postgres://albums:albums@db:5432/albums?sslmode=disable
+    ports:
+      - "127.0.0.1:${API_PORT:-8089}:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    # Docker sends SIGTERM on `compose stop`; the API drains in-flight
+    # requests within its shutdown timeout, which must fit inside this.
+    stop_grace_period: 15s
+
+volumes:
+  pgdata:
