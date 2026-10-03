@@ -1,0 +1,53 @@
+[project]
+name = "pubsub"
+version = "0.1.0"
+description = "Publish and consume through RabbitMQ without losing messages"
+requires-python = ">=3.11"
+dependencies = ["pika>=1.4.4,<1.5"]
+
+# Canonical lint, format and type-check config for every Python prototype in
+# Psychic-compendium. Copy it verbatim into the prototype directory. Changes
+# belong in templates/pyproject.toml first, then get propagated everywhere.
+
+[tool.ruff]
+line-length = 80 # Google Python Style Guide
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "UP",  # pyupgrade
+    "SIM", # flake8-simplify
+    "RUF", # ruff-specific
+    "PL",  # pylint
+    "N",   # pep8-naming
+    "C4",  # flake8-comprehensions
+    "D",   # pydocstyle, Google convention below
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+# Tests document themselves through their names; magic values are the point.
+"tests/**" = ["D", "PLR2004"]
+
+[tool.mypy]
+strict = true
+python_version = "3.11"
+warn_unreachable = true
+
+# --- pub-sub specific -------------------------------------------------------
+
+# pika 1.4 has inline annotations but no py.typed marker, so mypy will not use
+# them, and the only third-party stubs (pika-stubs 0.1.3, 2020) describe an
+# older API. Scope the escape hatch to pika alone; our own code stays fully
+# strict, and pika objects are held behind the typed Protocols in
+# pubsub/broker.py.
+[[tool.mypy.overrides]]
+module = ["pika", "pika.*"]
+ignore_missing_imports = true
