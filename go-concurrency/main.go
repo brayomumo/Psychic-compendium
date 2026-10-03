@@ -1,88 +1,149 @@
-// This is a PoC on Go concurrency and data sharing between goroutines
+// Command go-concurrency runs a producer/consumer pipeline built on goroutines and one shared
+// channel, then prints what happened: how the jobs were spread across consumers and how long
+// producers spent blocked by backpressure.
+//
+// Usage:
+//
+//	go-concurrency [-producers N] [-consumers N] [-jobs N] [-buffer N] [-work D] [-seed N] [-v]
+//
+// SIGINT (Ctrl+C) or SIGTERM cancels the run: producers stop, consumers stop and the partial summary
+// is printed. A second signal kills the process at once.
+//
+// Exit status: 0 when every job is consumed, 1 on a runtime failure, 2 on a usage error, and 128+n
+// after a clean shutdown on signal n (130 for SIGINT, 143 for SIGTERM).
 package main
 
 import (
+	"context"
+	"errors"
 	"flag"
+	"fmt"
+	"io"
 	"log"
-	"math/rand"
-	"strconv"
-	"sync"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
+
+	"github.com/brayomumo/Psychic-compendium/go-concurrency/internal/pipeline"
 )
 
-
-func producer(wg *sync.WaitGroup, ch chan DataObject, max_record int) {
-	defer wg.Done()
-	i := 1
-	for {
-		object := DataObject{
-			Index: i,
-			Name:  "Producer Object-"+strconv.Itoa(i),
-		}
-		select{
-		case ch <- object:
-			log.Printf("Producer %d\n", i)
-			i = i + 1
-			if i > max_record {
-				log.Println("Producer is Done!")
-				return
-
-			}
-		default:
-			log.Println("Buffer full, waiting for consumer to pick data....")
-			time.Sleep(2 * time.Second)
-		}
-	}
-	
-}
-
-func build_string(num int) string {
-	return "goroutine-" + strconv.Itoa(num)
-}
+// Exit statuses. A clean shutdown on signal n exits with 128+n instead; see signalError.
+const (
+	exitOK      = 0
+	exitFailure = 1
+	exitUsage   = 2 // bad flags or arguments, as the flag package does by default
+)
 
 func main() {
-	workers := flag.Int("consumers", 2, "Number for workers")
-	flag.Parse()
-	no_of_workers := *workers
+	ctx, stop := notifyContext()
+	code := run(ctx, os.Args[1:], os.Stdout, os.Stderr)
+	stop()
+	os.Exit(code)
+}
 
-	log.Printf("Starting app with %d Consumers\n",no_of_workers)
+// run is main without the process-global parts (signals, os.Args, os.Exit), so tests can drive it.
+// The summary goes to stdout; usage, per-job logs and errors go to stderr.
+func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("go-concurrency", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var cfg pipeline.Config
+	fs.IntVar(&cfg.Producers, "producers", 2, "producer goroutines, 1 to 10000")
+	fs.IntVar(&cfg.Consumers, "consumers", 4, "consumer goroutines, 1 to 10000")
+	fs.IntVar(&cfg.Jobs, "jobs", 100, "total jobs, split across producers")
+	fs.IntVar(&cfg.Buffer, "buffer", 10, "channel capacity; 0 = unbuffered")
+	fs.DurationVar(&cfg.Work, "work", 10*time.Millisecond, "mean simulated work per job, e.g. 0, 5ms, 1s")
+	fs.Uint64Var(&cfg.Seed, "seed", 1, "seed for the per-job work durations")
+	verbose := fs.Bool("v", false, "log every finished job to stderr")
 
-	// unbuffered channel holds one data object per time
-	// send value channel_name <- data-to-send
-	// variable_name := <-channel_name
-	// var msq_bus chan DataObject = make(chan DataObject)
-	MAX_RECORD := 100
-	// buffered channel
-	var shared_chan chan DataObject = make(chan DataObject, 10)
-
-	
-	// wait group to make sure main thread does not
-	// terminate before threads finish
-	var wait_group sync.WaitGroup
-
-	// no of processes to wait for
-	wait_group.Add(1 + no_of_workers)
-
-	
-	// Initialize Producer, we don't have to worry about channel blocking
-	// since its a buffered channel and producer has wait time when channel
-	// is blocked(no deadlocks)
-	// TODO: Make multiple producers to make it interesting :)
-	go producer(&wait_group, shared_chan, MAX_RECORD)
-
-	// initialize consumers
-	for i := 0; i < no_of_workers; i++ {
-		go func(i int){
-			name := build_string(i)
-			//create consumer
-			max_jobs := rand.Intn(MAX_RECORD/no_of_workers)
-			cons := Newconsumer(name, max_jobs, &wait_group)
-			cons.Run(shared_chan)
-		}(i)
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return exitOK
+		}
+		return exitUsage // the flag package has already printed the error and usage
+	}
+	if fs.NArg() > 0 {
+		fmt.Fprintf(stderr, "unexpected arguments: %q\n", fs.Args())
+		fs.Usage()
+		return exitUsage
+	}
+	if err := cfg.Validate(); err != nil {
+		fmt.Fprintf(stderr, "invalid flags:\n%v\n", err)
+		fs.Usage()
+		return exitUsage
+	}
+	if *verbose {
+		logger := log.New(stderr, "", log.Lmicroseconds) // a log.Logger is safe for concurrent use
+		cfg.OnJob = func(consumer int, job pipeline.Job) {
+			logger.Printf("consumer %d finished job %d from producer %d (work %v)",
+				consumer, job.ID, job.Producer, job.Work.Round(time.Microsecond))
+		}
 	}
 
-	// wait for goroutines to finish
-	wait_group.Wait()
-	// close shared channel
-	close(shared_chan)
+	fmt.Fprintf(stdout, "running: producers=%d consumers=%d jobs=%d buffer=%d work=%v seed=%d\n",
+		cfg.Producers, cfg.Consumers, cfg.Jobs, cfg.Buffer, cfg.Work, cfg.Seed)
+	stats, err := pipeline.Run(ctx, cfg)
+	printSummary(stdout, cfg, stats)
+
+	switch {
+	case err == nil:
+		return exitOK
+	case errors.Is(err, context.Canceled):
+		cause := context.Cause(ctx)
+		fmt.Fprintf(stderr, "%v: finished %d of %d jobs; %d produced jobs were left unfinished\n",
+			cause, stats.Consumed, cfg.Jobs, stats.Produced-stats.Consumed)
+		var sig signalError
+		if errors.As(cause, &sig) {
+			return 128 + int(sig.sig) // shell convention for "stopped by signal n"
+		}
+		return exitFailure // cancelled for a reason other than a signal
+	default:
+		fmt.Fprintf(stderr, "error: %v\n", err)
+		return exitFailure
+	}
+}
+
+func printSummary(w io.Writer, cfg pipeline.Config, s pipeline.Stats) {
+	fmt.Fprintf(w, "consumed %d/%d jobs in %v (produced %d)\n",
+		s.Consumed, cfg.Jobs, roundDuration(s.Elapsed), s.Produced)
+	fmt.Fprintf(w, "per consumer: %v\n", s.PerConsumer)
+	fmt.Fprintf(w, "producers blocked on send: %v in total (backpressure)\n", roundDuration(s.SendWait))
+}
+
+// roundDuration keeps three or so significant digits for both microsecond and multi-second runs.
+func roundDuration(d time.Duration) time.Duration {
+	if d < time.Millisecond {
+		return d.Round(time.Microsecond)
+	}
+	return d.Round(time.Millisecond)
+}
+
+// signalError is the cancellation cause recorded when a signal arrives.
+type signalError struct{ sig syscall.Signal }
+
+func (e signalError) Error() string { return "received " + e.sig.String() }
+
+// notifyContext returns a context cancelled by SIGINT or SIGTERM, with the signal as the
+// cancellation cause. signal.NotifyContext would not say which signal arrived, and the exit status
+// follows the 128+n convention.
+//
+// After the first signal, handling is reset to the default, so a second Ctrl+C terminates
+// immediately if shutdown ever hangs.
+func notifyContext() (context.Context, func()) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		select {
+		case s := <-signals:
+			signal.Stop(signals)
+			sig, _ := s.(syscall.Signal) // always a syscall.Signal on Unix
+			cancel(signalError{sig: sig})
+		case <-ctx.Done():
+		}
+	}()
+	return ctx, func() {
+		signal.Stop(signals)
+		cancel(nil)
+	}
 }
