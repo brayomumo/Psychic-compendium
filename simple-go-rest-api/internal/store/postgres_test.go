@@ -130,36 +130,72 @@ func TestPostgresSchemaRejectsInvalidRowsWrittenDirectly(t *testing.T) {
 	}
 }
 
-// The DSN must not be able to switch the pool to client-side parameter
-// interpolation, the code path of GO-2026-5004 in pgx 5.7.6.
-func TestPostgresNeverUsesTheSimpleProtocol(t *testing.T) {
-	dsn := isolatedDSN(t)
+// withExecMode returns dsn with default_query_exec_mode set to mode.
+func withExecMode(t *testing.T, dsn, mode string) string {
+	t.Helper()
 	u, err := url.Parse(dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
 	q := u.Query()
-	q.Set("default_query_exec_mode", "simple_protocol")
+	q.Set("default_query_exec_mode", mode)
 	u.RawQuery = q.Encode()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	s, err := OpenPostgres(ctx, u.String())
-	if err != nil {
-		t.Fatalf("OpenPostgres: %v", err)
+	return u.String()
+}
+
+// Client-side parameter interpolation (the simple protocol) is refused
+// before any connection is attempted. No database needed. The context is
+// already cancelled, so if the refusal were missing (or came after the
+// first ping), OpenPostgres would fail at once with "did not become
+// reachable" instead of retrying the unreachable address until the test
+// binary times out.
+func TestOpenPostgresRefusesTheSimpleProtocol(t *testing.T) {
+	dsn := withExecMode(t, "postgres://u:p@127.0.0.1:1/db?sslmode=disable", "simple_protocol")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	s, err := OpenPostgres(ctx, dsn)
+	if err == nil {
+		s.Close()
 	}
-	defer s.Close()
-	if mode := s.pool.Config().ConnConfig.DefaultQueryExecMode; mode != pgx.QueryExecModeCacheStatement {
-		t.Errorf("exec mode = %v, want QueryExecModeCacheStatement", mode)
+	if err == nil || !strings.Contains(err.Error(), "simple_protocol is not allowed") {
+		t.Fatalf("OpenPostgres = %v, want a refusal of simple_protocol", err)
 	}
-	// A value full of SQL metacharacters must round-trip as data.
+}
+
+// Every other exec mode binds parameters server-side, so it is honoured,
+// and SQL metacharacters round-trip as plain data in each.
+func TestPostgresServerSideExecModesRoundTripMetacharacters(t *testing.T) {
+	dsn := isolatedDSN(t)
 	evil := `$$; DROP TABLE albums; --$$ ' "`
-	a, err := s.Create(ctx, draft(t, evil, "Artist", 1))
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
-	got, err := s.Get(ctx, a.ID)
-	if err != nil || got.Title != evil {
-		t.Errorf("round-trip = %q, %v; want the title unchanged", got.Title, err)
+	for _, tt := range []struct {
+		mode string
+		want pgx.QueryExecMode
+	}{
+		{"cache_statement", pgx.QueryExecModeCacheStatement},
+		{"cache_describe", pgx.QueryExecModeCacheDescribe},
+		{"exec", pgx.QueryExecModeExec},
+		{"describe_exec", pgx.QueryExecModeDescribeExec},
+	} {
+		t.Run(tt.mode, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			s, err := OpenPostgres(ctx, withExecMode(t, dsn, tt.mode))
+			if err != nil {
+				t.Fatalf("OpenPostgres: %v", err)
+			}
+			defer s.Close()
+			if got := s.pool.Config().ConnConfig.DefaultQueryExecMode; got != tt.want {
+				t.Errorf("exec mode = %v, want %v", got, tt.want)
+			}
+			a, err := s.Create(ctx, draft(t, evil+" "+tt.mode, "Artist", 1))
+			if err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			got, err := s.Get(ctx, a.ID)
+			if err != nil || got.Title != evil+" "+tt.mode {
+				t.Errorf("round-trip = %q, %v; want the title unchanged", got.Title, err)
+			}
+		})
 	}
 }
 

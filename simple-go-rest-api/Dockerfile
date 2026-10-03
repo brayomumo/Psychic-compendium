@@ -1,7 +1,8 @@
 # syntax=docker/dockerfile:1
 
-# Build stage: compile a static binary. The Go version satisfies go.mod.
-FROM golang:1.23-alpine AS build
+# Build stage: compile a static binary. The patch version matches go.mod's
+# toolchain line, so the image builds with exactly what tests and lint use.
+FROM golang:1.27.1-alpine AS build
 WORKDIR /src
 # Dependencies first, so editing code does not invalidate this layer.
 COPY go.mod go.sum ./

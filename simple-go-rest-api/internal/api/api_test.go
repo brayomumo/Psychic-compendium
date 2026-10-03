@@ -160,9 +160,10 @@ func TestCreateAlbumRejectsBadRequests(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			hs := newHarness(t, nil, 0)
 			ct := tt.contentType
-			if ct == "-" {
+			switch ct {
+			case "-":
 				ct = ""
-			} else if ct == "" {
+			case "":
 				ct = "application/json"
 			}
 			rec := hs.do(http.MethodPost, "/albums", tt.body, "Content-Type", ct)

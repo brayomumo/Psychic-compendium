@@ -107,7 +107,9 @@ A store timeout is `503 unavailable` with `Retry-After: 1`. Anything unexpected 
 
 ## Run
 
-Requires Go 1.23+ and Docker (for PostgreSQL). `make run STORE=memory` needs no Docker.
+Requires any `go` 1.21 or newer on `PATH` and Docker (for PostgreSQL). The Makefile exports
+`GOTOOLCHAIN` from go.mod's `toolchain go1.27.1` line, so builds, tests and linters all run on
+Go 1.27.1, which `go` downloads on first use. `make run STORE=memory` needs no Docker.
 
 ```console
 $ make run
@@ -174,9 +176,9 @@ so it receives `docker stop`'s SIGTERM directly.
 | `make run` | Runs the demo above; exits 0 only if every check passes. |
 | `make test` | Unit tests under `-race` (no Docker). |
 | `make test-integration` | Starts PostgreSQL and runs every test, including the store suite, against it. |
-| `make lint` | gofmt, `go vet`, staticcheck, golangci-lint. |
+| `make lint` | The pinned toolchain's gofmt, `go vet`, staticcheck 2026.2.1, golangci-lint v2.14.0. |
 | `make check` | `lint`, then `test`. The merge gate; needs no Docker. |
-| `make vulncheck` | govulncheck 1.1.4. Informational and currently failing; see [Trade-offs](#trade-offs-and-limits). |
+| `make vulncheck` | govulncheck v1.8.0; fails if any known vulnerability is reachable. Needs network, so not part of `check`. |
 | `make db-up` / `make db-down` | Start PostgreSQL and wait for its healthcheck / remove the containers and the data volume. |
 | `make docker-smoke` | The container check above. |
 | `make clean` | Removes `bin/`. Never the database. |
@@ -191,7 +193,9 @@ so it receives `docker stop`'s SIGTERM directly.
 | `DB_PORT` | `5439` | Host port for PostgreSQL (127.0.0.1 only) |
 | `API_PORT` | `8089` | Host port for the API container (127.0.0.1 only) |
 | `DATABASE_URL` | `postgres://albums:albums@127.0.0.1:$(DB_PORT)/albums?sslmode=disable` | Local-only throwaway credentials |
-| `GO`, `STATICCHECK`, `GOLANGCI_LINT`, `COMPOSE`, `GOVULNCHECK` | `go`, `staticcheck`, `golangci-lint`, `docker compose`, `go run …govulncheck@v1.1.4` | Tools |
+| `GO` | `go` | Any Go 1.21+; `GOTOOLCHAIN` (from go.mod, not a knob) selects go1.27.1 |
+| `STATICCHECK`, `GOLANGCI_LINT`, `GOVULNCHECK` | `$(GO) run honnef.co/go/tools/cmd/staticcheck@2026.2.1`, `$(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0`, `$(GO) run golang.org/x/vuln/cmd/govulncheck@v1.8.0` | Pinned linters, built on first use |
+| `COMPOSE` | `docker compose` | Compose command |
 | `BIN_DIR` | `bin` | Build output |
 
 | `albums` flag or env | Default | Meaning |
@@ -245,8 +249,11 @@ code and confirming the named test fails:
   `relation "albums" already exists`, despite `IF NOT EXISTS`.
 - **Request contexts tied to the signal:** wiring `BaseContext` to the signal context makes
   `TestShutdownLetsInFlightRequestsFinish` fail with `context canceled`.
-- **Simple protocol allowed:** dropping the extended-protocol override makes
-  `TestPostgresNeverUsesTheSimpleProtocol` fail.
+- **Simple protocol allowed:** deleting the `simple_protocol` refusal from `OpenPostgres` makes
+  `TestOpenPostgresRefusesTheSimpleProtocol` fail in 0.00 s with `store: database did not become
+  reachable: context canceled`. The test passes an already-cancelled context, so that mutant
+  fails instead of retrying the unreachable address until the test binary times out, which is what
+  an earlier version of the test did.
 
 ## Failure modes
 
@@ -269,7 +276,7 @@ code and confirming the named test fails:
 | Malformed DSN | The error message echoes the password | A generic message | `TestOpenPostgresInvalidDSNDoesNotLeakThePassword` |
 | Several replicas migrate at once | Catalog duplicate-key errors | Schema applied under `pg_advisory_xact_lock` | `TestPostgresMigrationIsIdempotentUnderConcurrentStartup` |
 | A writer bypasses the API | Invalid rows | `CHECK` constraints repeat the domain rules | `TestPostgresSchemaRejectsInvalidRowsWrittenDirectly` |
-| DSN requests the simple protocol (GO-2026-5004 path) | Client-side interpolation | Extended protocol forced; metacharacters round-trip as data | `TestPostgresNeverUsesTheSimpleProtocol` |
+| DSN requests `default_query_exec_mode=simple_protocol` | pgx would interpolate parameters into the SQL client-side, the code behind GO-2024-2605 and GO-2026-5004 | Refused before connecting: startup fails with exit 1. The four server-side modes are honoured, and metacharacters round-trip as data in each | `TestOpenPostgresRefusesTheSimpleProtocol`, `TestPostgresServerSideExecModesRoundTripMetacharacters` |
 | Database down while running | Requests fail | `/readyz` returns `503` so a load balancer stops routing; `/healthz` stays `200` so the process isn't restarted | `TestProbes` |
 | SIGINT / SIGTERM with requests in flight | Dropped requests | Drain; contexts stay live; exit 130 / 143 | `TestShutdownLetsInFlightRequestsFinish`, `TestSignalsShutDownCleanlyWith128PlusN` |
 | A request outlives the drain | Shutdown hangs forever | Cut off at `-shutdown-timeout`: context cancelled, exit 1 | `TestShutdownTimeoutCutsOffStuckRequests` |
@@ -341,21 +348,36 @@ added. Every claim below was reproduced against that code (commit `ade3484` impo
 
 ## Trade-offs and limits
 
-- **Known vulnerabilities, tied to the toolchain.** `make vulncheck` (govulncheck 1.1.4) currently
-  reports 37 reachable vulnerabilities on the repo's Go 1.23.4 toolchain:
-  - **35 in the Go standard library** (`crypto/tls`, `crypto/x509`, `net/http`, `net/url`, …).
-    Go 1.23 no longer receives security fixes, and the fixes ship in Go 1.25.x and later.
+- **Vulnerabilities: none known, and `make vulncheck` enforces it.** With Go 1.27.1, pgx 5.11.0
+  and `golang.org/x/text` 0.42.0, govulncheck v1.8.0 reports `No vulnerabilities found.` A new
+  advisory now fails the target, and the fix is a version bump. It used to be informational: on
+  the repo's old Go 1.23.4 toolchain, govulncheck 1.1.4 reported 37 reachable vulnerabilities.
+  - **35 were in the Go standard library** (`crypto/tls`, `crypto/x509`, `net/http`, `net/url`,
+    …). Go 1.23 no longer gets security fixes; moving to a supported toolchain cleared them.
   - **[GO-2026-5004](https://pkg.go.dev/vuln/GO-2026-5004)** in pgx 5.7.6: SQL injection through
-    dollar-quoted literals in client-side parameter interpolation. It's fixed in pgx 5.9.2, which
-    needs Go 1.25. Mitigated here: the pool always uses the extended protocol, so parameters never
-    pass through that code. A test proves a DSN can't switch it off.
-  - **[GO-2026-5970](https://pkg.go.dev/vuln/GO-2026-5970)** in `golang.org/x/text` 0.24.0: an
-    infinite loop on invalid input. It's reached only through pgx's password normalization, with
-    the operator's own `DATABASE_URL`, not client input.
+    dollar-quoted literals in client-side parameter interpolation, fixed in pgx 5.9.2.
+  - **[GO-2026-5970](https://pkg.go.dev/vuln/GO-2026-5970)** in `x/text` 0.24.0: an infinite loop
+    on invalid input, reachable only through pgx's password normalization. Fixed in 0.39.0.
 
-  pgx 5.7.6 is the newest release that builds with Go 1.23, which is why `go.mod` says
-  `go 1.23.0` and not the repo's usual `go 1.22`. The real fix is repo-wide: move the toolchain,
-  linters and CI to a supported Go (1.25+), then bump pgx to ≥ 5.9.2 and `x/text` to ≥ 0.39.0.
+  pgx 5.7.6 was the newest release that built with Go 1.23. That's why the fix had to be
+  repo-wide (toolchain, linters and CI together) rather than a dependency bump.
+  `go.mod` now says `go 1.26.0`. That's the oldest supported Go, and also the minimum that `x/text`
+  0.42.0 and `x/sync` 0.23.0 declare. pgx 5.11.0 alone needs 1.25.
+- **The simple-protocol refusal outlived the bug it mitigated, on purpose.** With pgx 5.7.6,
+  forcing the extended protocol was the mitigation for GO-2026-5004. pgx 5.11.0 fixes that bug, and
+  the refusal stays as defence in depth:
+  - The client-side sanitizer behind `default_query_exec_mode=simple_protocol` has had two SQL
+    injection advisories ([GO-2024-2605](https://pkg.go.dev/vuln/GO-2024-2605) in pgx v4 and
+    GO-2026-5004 in v5). Binding parameters on the server rules out the whole class instead of
+    trusting the next fix.
+  - It costs nothing. pgx documents `exec` as behaving like `simple_protocol` for applications,
+    and recommends preferring it. It also works behind poolers without prepared-statement
+    support, such as PgBouncer in transaction mode.
+
+  What changed is the mechanism. The first mitigation silently overwrote whatever mode the DSN
+  asked for with `cache_statement`, so an operator who set `exec` for PgBouncer didn't get it. Now
+  only `simple_protocol` is rejected, with an error that names `exec`. The other four modes are
+  honoured as written.
 - **No authentication, authorization, TLS or rate limiting.** Put this behind a gateway that
   provides them, or add middleware. Any write endpoint exposed beyond localhost needs at least
   auth and rate limiting.
@@ -369,5 +391,6 @@ added. Every claim below was reproduced against that code (commit `ade3484` impo
   seconds, until the balancer stops routing, before calling `Shutdown`. Here `Shutdown` starts at
   once, which suits a single instance.
 - **Logs only.** No metrics or traces. The request ID is the hook for adding OpenTelemetry later.
-- **Images are pinned to minor tags** (`golang:1.23-alpine`, `postgres:17.6-alpine`,
-  `distroless/static-debian12`), not digests. Pinning by digest makes builds fully reproducible.
+- **Images are pinned to tags, not digests:** `golang:1.27.1-alpine` (the same patch release as
+  go.mod's `toolchain` line), `postgres:17.6-alpine`, and `distroless/static-debian12`. Pinning
+  by digest makes builds fully reproducible.

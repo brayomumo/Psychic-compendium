@@ -60,13 +60,22 @@ func OpenPostgres(ctx context.Context, dsn string) (*Postgres, error) {
 	if cfg.ConnConfig.ConnectTimeout == 0 {
 		cfg.ConnConfig.ConnectTimeout = defaultConnectTimeout
 	}
-	// Always send parameters separately from the SQL (the extended
-	// protocol), even if the DSN asks for default_query_exec_mode=
-	// simple_protocol. The simple protocol makes pgx interpolate parameters
-	// into the SQL text client-side, and that code path is where
-	// GO-2026-5004 (SQL injection via dollar-quoted literals, fixed in
-	// pgx 5.9.2, which needs Go 1.25) lives. See the README.
-	cfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeCacheStatement
+	// Parameters always travel separately from the SQL (the extended
+	// protocol), so the server binds them and they can never change a
+	// query's meaning. Only default_query_exec_mode=simple_protocol makes pgx
+	// interpolate them into the SQL text client-side. That sanitizer has had
+	// two SQL injection advisories (GO-2024-2605, GO-2026-5004), so it is
+	// refused even though the pgx in go.mod fixes both: server-side binding
+	// rules the whole class out instead of trusting the next fix. The other
+	// modes (cache_statement, the default; cache_describe; describe_exec;
+	// and exec) all bind server-side and stay available. pgx documents exec
+	// as behaving like simple_protocol for applications, and it works
+	// behind poolers without prepared-statement support, such as PgBouncer
+	// in transaction mode, so the error points there.
+	if cfg.ConnConfig.DefaultQueryExecMode == pgx.QueryExecModeSimpleProtocol {
+		return nil, errors.New("store: default_query_exec_mode=simple_protocol is not allowed: " +
+			"it interpolates parameters into the SQL client-side; use exec, which binds them server-side")
+	}
 	cfg.HealthCheckPeriod = defaultHealthCheckEvery
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
