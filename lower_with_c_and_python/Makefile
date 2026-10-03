@@ -2,8 +2,8 @@
 
 CC ?= cc
 PYTHON ?= python3
-RUFF ?= uvx ruff
-MYPY ?= uvx mypy
+RUFF ?= uvx ruff@0.16.10
+MYPY ?= uvx mypy@2.4.0
 CFLAGS ?= -O2
 SANITIZERS ?= address,undefined
 # 1: fail if ASan cannot run instead of falling back to the other sanitizers.

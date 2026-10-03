@@ -165,10 +165,10 @@ Trade-offs):
 
 ```console
 $ make check
-uvx ruff check .
+uvx ruff@0.16.10 check .
 All checks passed!
-uvx ruff format --check .
-uvx mypy .
+uvx ruff@0.16.10 format --check .
+uvx mypy@2.4.0 .
 Success: no issues found in 5 source files
 cc --analyze -Xclang -analyzer-werror -std=c11 -o /dev/null sum.c
 warning: AddressSanitizer does not work with cc here (an empty ASan program hung for 3 s at startup); using the rest. Set REQUIRE_ASAN=1 to make this an error.
@@ -223,8 +223,8 @@ test_sum: all tests passed
 | `CC` | `cc` | C compiler |
 | `CFLAGS` | `-O2` | Appended after `-std=c11` and the strict warning flags |
 | `PYTHON` | `python3` | Interpreter for the demo and tests |
-| `RUFF` | `uvx ruff` | Linter and formatter |
-| `MYPY` | `uvx mypy` | Type checker (strict, configured in `pyproject.toml`) |
+| `RUFF` | `uvx ruff@0.16.10` | Linter and formatter |
+| `MYPY` | `uvx mypy@2.4.0` | Type checker (strict, configured in `pyproject.toml`) |
 | `SANITIZERS` | `address,undefined` | For the native test in `test-c` |
 | `REQUIRE_ASAN` | `0` | `0`: if ASan can't run, warn and drop it from `SANITIZERS`. `1`: fail `test-c` (and `check`) instead. CI sets `1` so a broken ASan can never pass as a UBSan-only run. Any other value, or `1` with no `address` in `SANITIZERS`, is a usage error |
 
