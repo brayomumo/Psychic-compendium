@@ -1,36 +1,34 @@
 #!/usr/bin/env bash
 # Fails if the committed generated code does not match what the protos and
 # the pinned generators produce. Run from the prototype root via
-# `make check-generated`; needs buf, the pinned protoc-gen-go and
-# protoc-gen-go-grpc on PATH, and the client's uv environment.
+# `make check-generated`, which installs the pinned buf, protoc-gen-go and
+# protoc-gen-go-grpc into .tools/bin and puts that first on PATH.
 set -euo pipefail
 
+: "${BUF_VERSION:?set by the Makefile}"
 : "${PROTOC_GEN_GO_VERSION:?set by the Makefile}"
 : "${PROTOC_GEN_GO_GRPC_VERSION:?set by the Makefile}"
-: "${BUF:=buf}"
 : "${UV:=uv}"
 
 fail() { echo "check-generated: $*" >&2; exit 1; }
 
-# Different plugin versions generate different code, so a version mismatch
+# Different generator versions produce different code, so a version mismatch
 # would show up as drift with a misleading diff. Say so plainly instead.
-got_go="$(protoc-gen-go --version 2>/dev/null | awk '{print $2}')" ||
-  fail "protoc-gen-go not on PATH"
-[[ "$got_go" == "$PROTOC_GEN_GO_VERSION" ]] ||
-  fail "protoc-gen-go is ${got_go:-missing}, want $PROTOC_GEN_GO_VERSION" \
-    "(go install google.golang.org/protobuf/cmd/protoc-gen-go@$PROTOC_GEN_GO_VERSION)"
-got_grpc="$(protoc-gen-go-grpc --version 2>/dev/null | awk '{print "v" $2}')" ||
-  fail "protoc-gen-go-grpc not on PATH"
-[[ "$got_grpc" == "$PROTOC_GEN_GO_GRPC_VERSION" ]] ||
-  fail "protoc-gen-go-grpc is ${got_grpc:-missing}, want $PROTOC_GEN_GO_GRPC_VERSION" \
-    "(go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@$PROTOC_GEN_GO_GRPC_VERSION)"
+want() { # want <tool> <got> <wanted>
+  [[ "$2" == "$3" ]] || fail "$1 on PATH is ${2:-missing}, want $3 (run \`make clean-tools\`)"
+}
+want buf "v$(buf --version 2>/dev/null || true)" "$BUF_VERSION"
+want protoc-gen-go "$(protoc-gen-go --version 2>/dev/null | awk '{print $2}')" \
+  "$PROTOC_GEN_GO_VERSION"
+want protoc-gen-go-grpc "$(protoc-gen-go-grpc --version 2>/dev/null | awk '{print "v" $2}')" \
+  "$PROTOC_GEN_GO_GRPC_VERSION"
 
-"$BUF" lint
+buf lint
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-"$BUF" generate -o "$tmp"
+buf generate -o "$tmp"
 diff -ru server/gen "$tmp/server/gen" ||
   fail "server/gen is stale; run \`make generate\` and commit the result"
 

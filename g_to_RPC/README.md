@@ -128,7 +128,8 @@ flowchart LR
 
 ## Run
 
-Requires Go 1.23+, Python 3.11+ and [uv](https://docs.astral.sh/uv/).
+Requires any `go` 1.21 or newer on PATH, Python 3.11+ and [uv](https://docs.astral.sh/uv/).
+`server/go.mod` pins `toolchain go1.27.1`, and Go downloads it on first use.
 
 ```console
 $ make run
@@ -175,18 +176,22 @@ to explore it with `grpcurl`.
 | `make build` | Builds `server/bin/productserver` |
 | `make test` | Go tests under `-race`, then the Python suite (including end-to-end tests against the built server) |
 | `make lint` | gofmt, go vet, staticcheck, golangci-lint; ruff check and format; mypy `--strict` |
-| `make check` | `lint`, then `test`. The merge gate; needs only Go, uv and the Go linters. |
+| `make check` | `lint`, then `test`. The merge gate. It needs only Go and uv, because the linters run pinned through `go run`. |
+| `make vulncheck` | govulncheck over the server (needs network access to the vulnerability database) |
 | `make generate` | Regenerates `server/gen` (buf) and `client/ecommerce` (grpcio-tools) from the proto |
-| `make check-generated` | `buf lint`, plus a check that the committed generated code is not stale (needs buf and the pinned plugins) |
+| `make check-generated` | `buf lint`, plus a check that the committed generated code is not stale. Installs the pinned buf and plugins into a gitignored `.tools/` on first use. |
 | `make clean` | Removes the binary, the venv and the caches |
+| `make clean-tools` | Removes the installed generators in `.tools/` |
 
 **Make variables**
 
 | Variable | Default | Meaning |
 |---|---|---|
 | `PORT` | `50059` | Port `make run` serves on (`0` picks a free one) |
-| `GO`, `STATICCHECK`, `GOLANGCI_LINT` | `go`, `staticcheck`, `golangci-lint` | Go tools |
-| `BUF` | `buf` | Proto linter and generator |
+| `GO` | `go` | Go command; the Makefile exports `GOTOOLCHAIN` from `server/go.mod` |
+| `STATICCHECK` | `go run honnef.co/go/tools/cmd/staticcheck@2026.2.1` | Go static analysis |
+| `GOLANGCI_LINT` | `go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0` | Go meta-linter (v2 config) |
+| `GOVULNCHECK` | `go run golang.org/x/vuln/cmd/govulncheck@v1.8.0` | Vulnerability scan |
 | `PYTHON` | `python3` | Interpreter uv builds the venv with |
 | `UV` | `uv` | Python package manager |
 | `RUFF` | `uvx ruff@0.16.10` | Python linter and formatter |
@@ -331,9 +336,12 @@ Further checks run before committing:
   calls.
 - **Search is a linear scan** over a snapshot, O(n) per query. That is fine for a demo; an index
   would be needed at scale.
-- **Version pins.** grpc-go is pinned to v1.75.1, the newest release that supports Go 1.23 (the
-  repo's toolchain); v1.76 and later need Go 1.24. The Python side uses grpcio 1.84.
+- **Version pins.** The server builds with Go 1.27.1 (`toolchain` in `server/go.mod`), and the
+  language version is `go 1.26`, the oldest supported Go release. It uses grpc-go v1.83.2 and
+  protobuf v1.36.12; the Python side uses grpcio 1.84. The first version of this branch was stuck on
+  grpc-go v1.75.1, because the repo then targeted the unsupported Go 1.23 and v1.76+ need Go 1.24.
 - **Generated code is committed**, so building needs only Go and uv. Regenerating needs buf
-  1.56+, `protoc-gen-go` v1.36.11 and `protoc-gen-go-grpc` v1.6.1 (pinned in the Makefile and
-  checked by `make check-generated`). Python generation uses the locked `grpcio-tools` and
+  v1.73.0, `protoc-gen-go` v1.36.12 and `protoc-gen-go-grpc` v1.6.2. They're pinned in the Makefile
+  and installed into `.tools/` by `make generate` / `make check-generated`, so nothing needs to be
+  installed by hand. Python generation uses the locked `grpcio-tools` and
   `mypy-protobuf`.
