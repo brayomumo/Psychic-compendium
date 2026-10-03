@@ -1,0 +1,139 @@
+// Product catalog API. It exists to exercise every gRPC communication
+// pattern (unary, server streaming, client streaming and bidirectional
+// streaming) on one small, realistic domain.
+syntax = "proto3";
+
+package ecommerce.v1;
+
+option go_package = "github.com/brayomumo/Psychic-compendium/g_to_RPC/server/gen/ecommerce/v1;ecommercev1";
+
+// ProductCatalogService stores products and prices them.
+service ProductCatalogService {
+  // AddProduct stores a new product and returns it with its server-assigned
+  // ID. Sending the same request_id again returns the product the first
+  // attempt created instead of a duplicate, which makes retries safe.
+  rpc AddProduct(AddProductRequest) returns (AddProductResponse);
+
+  // GetProduct returns one product by ID.
+  rpc GetProduct(GetProductRequest) returns (GetProductResponse);
+
+  // SearchProducts streams every product whose name or description contains
+  // the query, case-insensitively, ordered by name. An empty query matches
+  // everything.
+  rpc SearchProducts(SearchProductsRequest) returns (stream SearchProductsResponse);
+
+  // BulkAddProducts stores every streamed product atomically: either all of
+  // them are added or, if any is invalid, none is.
+  rpc BulkAddProducts(stream BulkAddProductsRequest) returns (BulkAddProductsResponse);
+
+  // QuoteProducts answers each streamed (product, quantity) pair with a price
+  // as soon as it arrives. A bad item gets an error status in its response;
+  // the stream carries on.
+  rpc QuoteProducts(stream QuoteProductsRequest) returns (stream QuoteProductsResponse);
+}
+
+// Product is a catalog entry.
+message Product {
+  // Server-assigned identifier (a UUID). Clients never choose it.
+  string id = 1;
+  // Display name, 1 to 200 characters, unique case-insensitively.
+  string name = 2;
+  // Free text, up to 2000 characters.
+  string description = 3;
+  // Price in the smallest currency unit, so no floating-point rounding.
+  int64 price_cents = 4;
+}
+
+// NewProduct is what a client supplies to create a product.
+message NewProduct {
+  // See Product.name.
+  string name = 1;
+  // See Product.description.
+  string description = 2;
+  // See Product.price_cents. Zero or more.
+  int64 price_cents = 3;
+}
+
+// AddProductRequest creates one product.
+message AddProductRequest {
+  // The product to create.
+  NewProduct product = 1;
+  // Optional idempotency key (AIP-155). A retry with the same key returns
+  // the product the first attempt created. Reusing a key for a different
+  // product is rejected with FAILED_PRECONDITION.
+  string request_id = 2;
+}
+
+// AddProductResponse carries the stored product.
+message AddProductResponse {
+  // The product as stored, with its ID.
+  Product product = 1;
+}
+
+// GetProductRequest names one product.
+message GetProductRequest {
+  // The product's ID.
+  string id = 1;
+}
+
+// GetProductResponse carries the requested product.
+message GetProductResponse {
+  // The product.
+  Product product = 1;
+}
+
+// SearchProductsRequest filters the catalog.
+message SearchProductsRequest {
+  // Case-insensitive substring of the name or description.
+  string query = 1;
+}
+
+// SearchProductsResponse is one match.
+message SearchProductsResponse {
+  // A matching product.
+  Product product = 1;
+}
+
+// BulkAddProductsRequest is one product of a bulk add.
+message BulkAddProductsRequest {
+  // The product to create.
+  NewProduct product = 1;
+}
+
+// BulkAddProductsResponse lists every product the bulk add stored.
+message BulkAddProductsResponse {
+  // The stored products, in the order they were sent.
+  repeated Product products = 1;
+}
+
+// QuoteProductsRequest asks for the price of a quantity of one product.
+message QuoteProductsRequest {
+  // The product to price.
+  string product_id = 1;
+  // How many, from 1 to 1,000,000.
+  int64 quantity = 2;
+}
+
+// QuoteProductsResponse answers one QuoteProductsRequest.
+message QuoteProductsResponse {
+  // Echoed from the request.
+  string product_id = 1;
+  // Echoed from the request.
+  int64 quantity = 2;
+  // Whether the quote succeeded.
+  QuoteStatus status = 3;
+  // quantity * price_cents. Set only when status is QUOTE_STATUS_OK.
+  int64 total_cents = 4;
+}
+
+// QuoteStatus is the outcome of one quote.
+enum QuoteStatus {
+  // Never sent; the proto3 default.
+  QUOTE_STATUS_UNSPECIFIED = 0;
+  // total_cents holds the price.
+  QUOTE_STATUS_OK = 1;
+  // No product has that ID.
+  QUOTE_STATUS_NOT_FOUND = 2;
+  // The quantity is outside 1 to 1,000,000.
+  QUOTE_STATUS_INVALID_QUANTITY = 3;
+}

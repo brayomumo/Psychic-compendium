@@ -1,0 +1,6 @@
+/server/bin/
+/client/.venv/
+/.tools/
+__pycache__/
+.mypy_cache/
+.ruff_cache/

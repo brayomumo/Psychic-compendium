@@ -1,0 +1,11 @@
+# buf v2 workspace. STANDARD lint enforces Google's proto style guide:
+# versioned packages, PascalCase RPCs, <Rpc>Request/<Rpc>Response messages.
+version: v2
+modules:
+  - path: proto
+lint:
+  use:
+    - STANDARD
+breaking:
+  use:
+    - FILE
