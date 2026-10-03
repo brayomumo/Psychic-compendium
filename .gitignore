@@ -1,3 +1,8 @@
+# Repo-wide
+.DS_Store
+# Agent/tool worktrees created inside the repo
+.claude/worktrees/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
