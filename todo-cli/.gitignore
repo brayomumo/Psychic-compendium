@@ -1,0 +1,10 @@
+# Build output
+/bin/
+
+# Data files written by `make run` and `make demo`
+/tasks.json
+/.demo-tasks.json
+
+# Temp files left by an atomic save that was killed mid-write (SIGKILL,
+# power loss). They are never read and are safe to delete.
+.*.tmp-*
